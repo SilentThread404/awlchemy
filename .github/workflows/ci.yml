@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - run: uv run pytest -q
+      - name: JavaScript syntax
+        run: node --check awlchemy/static/app.js
+
+  no-pattern-content:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse PDFs and real Drive folder links
+        run: |
+          if git ls-files | grep -iE '\.pdf$'; then echo "::error::PDF files must not be committed"; exit 1; fi
+          # Placeholder IDs used in docs/tests are short and made up; a real folder ID is ~33 chars.
+          if git grep -nE 'drive\.google\.com/drive/(u/[0-9]+/)?folders/[A-Za-z0-9_-]{25,}' -- ':!*.lock'; then
+            echo "::error::Real Google Drive folder links must stay in your local settings"; exit 1
+          fi

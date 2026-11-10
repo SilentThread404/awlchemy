@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Awlchemy · pattern library and leathercraft teacher</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Alegreya:wght@500;700;800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">Awlchemy</a>
+    <nav class="nav">
+      <a href="#/" data-nav="library">Library</a>
+      <a href="#/bench" data-nav="bench">My bench</a>
+      <a href="#/learn" data-nav="learn">Learn</a>
+      <a href="#/settings" data-nav="settings">Settings</a>
+    </nav>
+    <div class="sync-status" id="sync-status"></div>
+  </header>
+  <main id="app"></main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
