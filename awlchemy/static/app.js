@@ -81,38 +81,161 @@ async function pollJob(job, onUpdate) {
 
 /* ------------------------------------------------------------------ top bar: sync */
 let syncWatching = false;
+let libRefreshedAt = 0;
+const BASE_TITLE = document.title;
+
 async function refreshStats() {
   state.stats = await api("/api/stats");
-  renderSyncStatus();
   const job = state.stats.library_job;
+  if (job && !syncWatching) state.job = job;
+  renderSyncStatus();
+  renderSyncPanel();
   if (job && !syncWatching) {
     syncWatching = true;
-    pollJob(job, () => renderSyncStatus(true))
-      .then((j) => {
-        const r = j.result || {};
-        if (j.kind === "sync") toast(r.downloaded ? `${r.downloaded} new file(s) downloaded` : "Library is up to date");
-      })
-      .catch((e) => toast(`Sync stopped: ${e.message}`, 6000))
+    pollJob(job, (j) => {
+      state.job = j;
+      renderSyncStatus();
+      renderSyncPanel();
+      // Patterns are saved one by one while they're read, so let them appear as they arrive.
+      if (j.progress?.phase === "indexing" && route().name === "library" && Date.now() - libRefreshedAt > 6000) {
+        libRefreshedAt = Date.now();
+        renderLibrary();
+      }
+    })
+      .then((j) => toast(doneMessage(j), 7000))
+      .catch((e) => toast(`The library update stopped: ${e.message}`, 8000))
       .finally(async () => {
         syncWatching = false;
+        state.job = null;
+        document.title = BASE_TITLE;
         await refreshStats();
         if (route().name === "library" || route().name === "bench") render();
       });
   }
 }
 
-function renderSyncStatus(busy) {
+function doneMessage(j) {
+  const r = j.result || {};
+  const failed = r.failed ? ` ${r.failed} file(s) couldn't be downloaded; they'll be tried again next time.` : "";
+  if (j.kind === "sync") {
+    if (r.added) return `Your library is ready: ${r.added} new pattern file(s) added.${failed}`;
+    return `Your library is up to date.${failed}`;
+  }
+  if (j.kind === "index" && r.added) return `${r.added} new pattern file(s) added to your library.`;
+  return "Library updated.";
+}
+
+/* What the running library job is doing, in words a person can follow. */
+const STEPS = {
+  listing: "Find your patterns",
+  downloading: "Bring them to this computer",
+  indexing: "Read each pattern and make its cover",
+};
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+function fmtBytes(b) {
+  if (!b) return "";
+  return b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(b / 1e6))} MB`;
+}
+
+function timeLeft(p) {
+  if (!p.total || !p.phase_started) return "";
+  const elapsed = Date.now() / 1000 - p.phase_started;
+  if (p.done < 3 || elapsed < 15) return "working out how long this takes…";
+  const left = ((p.total - p.done) * elapsed) / p.done;
+  if (left < 60) return "less than a minute left";
+  if (left < 3600) return `about ${Math.round(left / 60)} min left`;
+  const h = Math.floor(left / 3600), m = Math.round((left % 3600) / 60);
+  return `about ${h} h${m ? ` ${m} min` : ""} left`;
+}
+
+function jobShort(job) {
+  const p = job.progress || {};
+  const pct = p.total ? Math.min(100, Math.round((100 * (p.done || 0)) / p.total)) : null;
+  const fetching = p.source_kind === "folder" ? "Copying" : "Downloading";
+  if (job.kind === "import") return { text: "Importing…", pct: null };
+  if (p.phase === "listing") return { text: `Finding patterns… ${(p.found || 0) + (p.have || 0)} files`, pct: null };
+  if (p.phase === "downloading" && p.total) return { text: `${fetching} ${p.done} of ${p.total}`, pct };
+  if (p.phase === "indexing" && p.total) return { text: `Reading patterns ${p.done} of ${p.total}`, pct };
+  return { text: "Updating library…", pct: null };
+}
+
+function renderSyncStatus() {
   const s = state.stats;
   const el = $("#sync-status");
   if (!s) return;
-  const running = busy || s.library_job;
-  el.innerHTML = running
-    ? `<span class="spinner"></span><span class="label">Updating library…</span>`
-    : `<span class="label">Synced ${esc(ago(s.last_sync))}</span><button class="btn" id="sync-btn">Check for new patterns</button>`;
+  const job = state.job?.status === "running" ? state.job : s.library_job;
+  if (job) {
+    const { text, pct } = jobShort(job);
+    el.innerHTML = `<button class="sync-progress" id="sync-open" title="See what's happening">
+        <span class="spinner"></span><span class="label">${esc(text)}</span>
+        ${pct != null ? `<span class="bar" aria-hidden="true"><i style="width:${pct}%"></i></span>` : ""}</button>`;
+    document.title = pct != null ? `(${pct}%) ${BASE_TITLE}` : BASE_TITLE;
+    $("#sync-open").addEventListener("click", () => {
+      if (route().name !== "library") location.hash = "#/";
+      setTimeout(() => $("#sync-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+    });
+    return;
+  }
+  el.innerHTML = `<span class="label">Synced ${esc(ago(s.last_sync))}</span><button class="btn" id="sync-btn">Check for new patterns</button>`;
   $("#sync-btn")?.addEventListener("click", async () => {
     await api("/api/sync", { method: "POST" });
     refreshStats();
   });
+}
+
+function renderSyncPanel() {
+  const el = $("#sync-panel");
+  if (!el) return;
+  const job = state.job;
+  if (!job || job.status !== "running" || job.kind === "import") { el.innerHTML = ""; return; }
+  const p = job.progress || {};
+  const first = job.kind === "sync" && !state.stats?.last_sync;
+  const drive = p.source_kind !== "folder";
+  const order = job.kind === "sync" ? ["listing", "downloading", "indexing"] : ["indexing"];
+  const at = Math.max(0, order.indexOf(p.phase));
+
+  const detail = (k, st) => {
+    if (k === "listing") {
+      const have = p.have ? `, ${plural(p.have, "file")} already here` : "";
+      if (st === "now") return `Looked in ${plural(p.folders || 0, "folder")} so far · ${plural(p.found || 0, "new file")} to download${have}`;
+      return `${plural(p.found || 0, "new file")} to download${have}`;
+    }
+    if (k === "downloading") {
+      if (st !== "now") return st === "done" ? `${plural(p.total || 0, "file")} downloaded` : "";
+      return [`${p.done || 0} of ${p.total || 0}`, fmtBytes(p.bytes), timeLeft(p)].filter(Boolean).join(" · ");
+    }
+    if (st !== "now") return "";
+    return [`${p.done || 0} of ${p.total || 0}`, timeLeft(p)].filter(Boolean).join(" · ") +
+      `<br><span class="muted">Patterns show up below as soon as they're ready.</span>`;
+  };
+  const bar = (k) => (k === p.phase && p.total ? `<span class="bar"><i style="width:${Math.round((100 * (p.done || 0)) / p.total)}%"></i></span>` : "");
+  const steps = order.map((k, i) => {
+    const st = i < at ? "done" : i === at ? "now" : "next";
+    const label = k === "downloading" && !drive ? "Copy them into your library" : STEPS[k];
+    return `<li class="${st}"><span class="dot" aria-hidden="true">${st === "done" ? "✓" : i + 1}</span>
+      <div><strong>${label}</strong><div class="step-detail">${detail(k, st)}</div>${bar(k)}</div></li>`;
+  }).join("");
+
+  const title = job.kind !== "sync" ? "Reading new patterns" : first ? "Setting up your library" : "Checking for new patterns";
+  const source = p.source ? `<p class="muted">${p.source_count > 1 ? `Source ${p.source_index} of ${p.source_count}: ` : "From "}<strong>${esc(p.source)}</strong></p>` : "";
+  const why = first
+    ? `<div class="why"><h3>Why the first time takes a while</h3>
+        <p>${drive
+          ? "Every pattern file is downloaded from Google Drive one at a time, with a short pause between files so Drive keeps serving them. Collections often hold hundreds of files, because many patterns come in several paper sizes."
+          : "Every pattern file is copied into your library first."}
+        Then each one is opened to read its text and make a cover picture.</p>
+        <p><strong>This only happens once.</strong> After this, Awlchemy only fetches files that are new.</p></div>`
+    : "";
+  el.innerHTML = `<section class="sync-panel" aria-live="polite">
+      <h2>${title}</h2>${source}
+      <ol class="steps-progress">${steps}</ol>
+      ${p.current ? `<p class="now-file">Now: <span>${esc(p.current)}</span></p>` : ""}
+      ${p.failed ? `<p class="warn">${p.failed} file(s) couldn't be downloaded. They'll be tried again next time.</p>` : ""}
+      ${why}
+      <p class="muted small">You can keep browsing or close this tab. The work carries on as long as Awlchemy is running, and if you stop it, it picks up where it left off.</p>
+    </section>`;
 }
 
 /* ------------------------------------------------------------------ router */
@@ -150,6 +273,7 @@ function card(p) {
     <div class="body">
       <div class="title">${esc(p.title)}</div>
       ${p.collection && p.collection !== p.title ? `<div class="muted small">${esc(p.collection)}</div>` : ""}
+      ${p.papers?.length > 1 ? `<div class="papers" title="Print sizes included">${p.papers.map(esc).join(" · ")}</div>` : ""}
       <div class="meta">${p.kind === "guide" ? `<span>${p.pages} pages</span>` : holes(p.difficulty)}
         ${p.status ? `<span class="tag ${p.status}">${STATUS[p.status]}</span>` : p.has_guide ? `<span class="tag">Guide ready</span>` : ""}</div>
     </div></a>`;
@@ -182,6 +306,7 @@ async function renderLibrary() {
       <section>
         <div class="lib-head"><h1 id="lib-title">Patterns</h1><span class="count" id="lib-count"></span>
           <div class="actions"><button class="btn primary" id="add-btn">Add a pattern</button></div></div>
+        <div id="sync-panel"></div>
         <div class="search"><input type="search" id="q" placeholder="Search titles, folders and pattern text, e.g. “wallet” or “rivet”" value="${esc(f.q)}"></div>
         <div id="results"></div>
       </section></div></div>`;
@@ -189,6 +314,7 @@ async function renderLibrary() {
     $("#q").addEventListener("input", (e) => { clearTimeout(t); t = setTimeout(() => { f.q = e.target.value; renderLibrary(); }, 250); });
     $("#add-btn").addEventListener("click", openAddModal);
   }
+  renderSyncPanel();
 
   $("#filters").innerHTML = `
     <h3>Show</h3><div class="chip-list">${chip("kind", "pattern", "Patterns")}${chip("kind", "guide", "Guide books")}</div>
@@ -207,6 +333,7 @@ async function renderLibrary() {
   const results = $("#results");
   if (!items.length) {
     const nothing = !s.total;
+    if (nothing && (state.job?.status === "running" || s.library_job)) { results.innerHTML = ""; return; }
     results.innerHTML = nothing
       ? `<div class="empty"><h2>Your library is empty</h2><p>${s.library_job ? "Fetching your patterns. They appear here as they're indexed." : s.source_count ? "Fetch the patterns from your sources, or add your own." : "Add where your patterns live (a shared Google Drive folder or a folder on this computer) under <a href=\"#/settings\">Settings</a>, or import PDFs directly."}</p>
           ${s.library_job || !s.source_count ? "" : `<p><button class="btn primary" id="first-sync">Fetch my patterns</button></p>`}</div>`
@@ -294,6 +421,34 @@ function openAddModal() {
 /* ------------------------------------------------------------------ pattern page */
 let current = null; // pattern being shown
 
+// Letter is the everyday paper in North America and a few other places; A4 everywhere else.
+const LETTER_REGIONS = ["US", "CA", "MX", "PH", "CL", "CO", "VE", "GT", "CR", "PR"];
+const homePaper = () => (LETTER_REGIONS.includes((navigator.language.split("-")[1] || "").toUpperCase()) ? "Letter" : "A4");
+const PAPER_HINT = {
+  A4: "home printer", Letter: "home printer", Legal: "home printer", A5: "home printer",
+  A3: "large office printer", Tabloid: "large office printer",
+  A2: "print shop, large sheets", A1: "print shop, one big sheet", A0: "print shop, one big sheet",
+};
+
+function printBox(p, pdf) {
+  const tip = `<p>Print at <strong>100% / “Actual size”</strong>, never “Fit to page”, and measure the calibration square before you cut leather.</p>`;
+  const prints = p.prints || [];
+  if (!prints.length) {
+    return `<div class="print-box"><a class="btn primary" href="${pdf}" target="_blank" rel="noopener">Open the original PDF to print</a>${tip}</div>`;
+  }
+  const home = homePaper();
+  const sorted = [...prints].sort((a, b) => (b.paper === home) - (a.paper === home));
+  const fileUrl = (v) => `/files/${v.id}/${encodeURIComponent(v.rel_path.split("/").pop())}`;
+  const sizes = sorted.map((v, i) => `<a class="size ${i === 0 ? "first" : ""}" href="${fileUrl(v)}" target="_blank" rel="noopener">
+      <strong>${esc(v.paper)}</strong><span>${plural(v.pages || 0, "page")} · ${PAPER_HINT[v.paper] || "printer"}</span></a>`).join("");
+  const instructions = p.paper ? "" : `<p class="small"><a href="${pdf}" target="_blank" rel="noopener">Open the instructions PDF</a></p>`;
+  const tiled = prints.some((v) => PAPER_HINT[v.paper] === "home printer") && prints.some((v) => /^A[0-2]$/.test(v.paper));
+  return `<div class="print-box">
+      <h3>Print the pattern pieces</h3>
+      <p class="small">Pick the paper you have. ${tiled ? "Home sizes print the pieces across several pages that you tape together; the big sizes are for a copy shop." : ""}</p>
+      <div class="sizes">${sizes}</div>${tip}${instructions}</div>`;
+}
+
 async function renderPattern(id, tab) {
   if (!state.settings) await loadSettings();
   const p = await api(`/api/patterns/${id}`);
@@ -308,10 +463,7 @@ async function renderPattern(id, tab) {
       <h1>${esc(p.title)}</h1>
       <div class="sub">${p.kind === "guide" ? "Guide book" : holes(p.difficulty) + `<span>${esc(p.difficulty || "Not rated")}</span>`}<span>${p.pages} page${p.pages === 1 ? "" : "s"}</span><span>${esc(p.source)}</span></div>
       <div class="hero-img"><img id="hero" src="/api/patterns/${p.id}/cover?t=${Date.now()}" alt="${esc(p.title)}"></div>
-      <div class="print-box">
-        <a class="btn primary" href="${pdf}" target="_blank" rel="noopener">Open the original PDF to print</a>
-        <p>Print at <strong>100% / “Actual size”</strong>, never “Fit to page”, and measure the calibration square before you cut leather.</p>
-      </div>
+      ${printBox(p, pdf)}
       ${p.kind === "pattern" ? `<label for="status" style="color:#fff">Status</label>
       <select id="status">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${p.status === k ? "selected" : ""}>${v}</option>`).join("")}</select>` : ""}
       <h3>Pages</h3>

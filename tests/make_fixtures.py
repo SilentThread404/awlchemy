@@ -29,15 +29,23 @@ def text_pdf(path, body, with_photo=True):
     p3.insert_text((110, 90), "G1 FRONT PANEL 40 x 80 mm", fontsize=8)
     doc.save(path)
 
-def image_pdf(path, color):
+def image_pdf(path, color, px=(1190, 1684)):
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = pymupdf.open()
     for i in range(2):
         page = doc.new_page(width=595, height=842)
-        page.insert_image(page.rect, stream=photo(1190, 1684, color))
+        page.insert_image(page.rect, stream=photo(*px, color))
     doc.save(path)
 
 text_pdf(easy / "KeyChains" / "1_ Leather_Key_Fob_Pattern.pdf", text)
+# one pattern shipped as instructions plus the pieces in three paper sizes
+sling = lib / "210+ LEATHERCRAFT PATTERNS" / "2. MEDIUM" / "Sling Bag 3"
+text_pdf(sling / "Sling Bag 3 Instructions.pdf", text.replace("KEY FOB", "SLING BAG"))
+for size in ("A4", "Letter", "A1"):
+    image_pdf(sling / f"Sling Bag {size}.pdf", (0.5, 0.35, 0.2), px=(60, 85))
+# a pattern that only comes in paper sizes
+image_pdf(lib / "210+ LEATHERCRAFT PATTERNS" / "3. HARD" / "Belt" / "Belt US_Letter.pdf", (0.3, 0.2, 0.1), px=(60, 85))
+image_pdf(lib / "210+ LEATHERCRAFT PATTERNS" / "3. HARD" / "Belt" / "Belt A4.pdf", (0.3, 0.2, 0.1), px=(60, 85))
 image_pdf(easy / "KeyChains" / "3_ Leather_Keychain.pdf", (0.4, 0.25, 0.15))
 image_pdf(easy / "KeyChains" / "4_ Leather_Keychain.pdf", (0.6, 0.4, 0.2))
 text_pdf(lib / "210+ LEATHERCRAFT PATTERNS" / "2. MEDIUM" / "Card Holder" / "Card_Holder.pdf", text.replace("KEY FOB", "CARD HOLDER"))

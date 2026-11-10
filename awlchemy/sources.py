@@ -15,11 +15,12 @@ so the links to patterns you bought stay on your computer.
 from __future__ import annotations
 
 import shutil
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import config, drive_sync
+from . import config, drive_sync, jobs
 
 Log = Callable[[str], None]
 KINDS = ("gdrive", "folder")
@@ -89,8 +90,9 @@ def sync_all(log: Log = print, dry_run: bool = False, only: str | None = None) -
         raise ValueError(f"No enabled source called '{only}'.")
     if not chosen:
         log("No pattern sources yet. Add a Google Drive folder or a local folder under Settings.")
-    for s in chosen:
+    for i, s in enumerate(chosen, 1):
         log(f"Checking '{s['name']}' for new files…")
+        jobs.report(log, source=s["name"], source_kind=s["kind"], source_index=i, source_count=len(chosen))
         try:
             if s["kind"] == "gdrive":
                 r = drive_sync.sync_folder(s["location"], target_dir(s), dry_run=dry_run, log=log)
@@ -111,7 +113,9 @@ def mirror_folder(src: Path, dest: Path, *, dry_run: bool = False, log: Log = pr
     A file is copied when it's new or its size or modification time changed."""
     if not src.is_dir():
         raise FileNotFoundError(f"Folder not found: {src}")
-    copied: list[Path] = []
+    jobs.report(log, phase="listing", folders=0, found=0, have=0)
+    todo: list[tuple[Path, Path]] = []
+    have = 0
     for f in sorted(src.rglob("*")):
         if not f.is_file() or f.suffix.lower() not in COPY_SUFFIXES:
             continue
@@ -120,10 +124,22 @@ def mirror_folder(src: Path, dest: Path, *, dry_run: bool = False, log: Log = pr
         if out.exists():
             ost = out.stat()
             if ost.st_size == st.st_size and int(ost.st_mtime) == int(st.st_mtime):
+                have += 1
                 continue
+        todo.append((f, out))
+    jobs.report(log, found=len(todo), have=have)
+
+    jobs.report(log, phase="downloading", phase_started=time.time(), done=0, total=len(todo),
+                failed=0, bytes=0, current="")
+    copied: list[Path] = []
+    got = 0
+    for i, (f, out) in enumerate(todo):
         log(f"  + {out.relative_to(dest).as_posix()}")
         if not dry_run:
+            jobs.report(log, current=out.name)
             out.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(f, out)  # copy2 keeps the mtime, so the next run can skip it
+            got += out.stat().st_size
         copied.append(out)
+        jobs.report(log, done=i + 1, bytes=got)
     return copied
