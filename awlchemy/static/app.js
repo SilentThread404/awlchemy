@@ -1,4 +1,4 @@
-/* Awlchemy frontend — plain JS, hash routing. */
+/* Awlchemy frontend: plain JS, hash routing. */
 "use strict";
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -7,8 +7,10 @@ const app = $("#app");
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 function md(text) {
-  let html = window.marked ? marked.parse(text || "", { breaks: false }) : `<p>${esc(text)}</p>`;
-  html = window.DOMPurify ? DOMPurify.sanitize(html) : html;
+  // Never render Markdown unsanitised: if either library failed to load, show plain text.
+  const html = window.marked && window.DOMPurify
+    ? DOMPurify.sanitize(marked.parse(text || "", { breaks: false }))
+    : `<p>${esc(text).replace(/\n/g, "<br>")}</p>`;
   // "Title (#12)" in teacher answers -> link to that pattern
   return html.replace(/\(#(\d+)\)/g, '(<a href="#/p/$1">open pattern</a>)');
 }
@@ -180,7 +182,7 @@ async function renderLibrary() {
       <section>
         <div class="lib-head"><h1 id="lib-title">Patterns</h1><span class="count" id="lib-count"></span>
           <div class="actions"><button class="btn primary" id="add-btn">Add a pattern</button></div></div>
-        <div class="search"><input type="search" id="q" placeholder="Search titles, folders and pattern text — try “wallet” or “rivet”" value="${esc(f.q)}"></div>
+        <div class="search"><input type="search" id="q" placeholder="Search titles, folders and pattern text, e.g. “wallet” or “rivet”" value="${esc(f.q)}"></div>
         <div id="results"></div>
       </section></div></div>`;
     let t;
@@ -239,7 +241,7 @@ function openAddModal() {
     <h2>Add a pattern</h2>
     <p class="muted">Bought a pattern somewhere else? Drop the PDF (or ZIP) here, or paste a link.</p>
     <label for="coll">Folder name <span class="muted">(optional)</span></label>
-    <input type="text" id="coll" placeholder="e.g. Etsy — Card wallets">
+    <input type="text" id="coll" placeholder="e.g. Etsy card wallets">
     <div class="hint">Groups the files together in your library. Leave empty to use the file or page name.</div>
     <label>Files</label>
     <div class="drop" id="drop" tabindex="0">Drop PDF or ZIP files here, or <u>choose files</u><input type="file" id="file" accept=".pdf,.zip" multiple hidden></div>
@@ -260,7 +262,7 @@ function openAddModal() {
     try {
       const j = await pollJob(job, showJob);
       const n = (j.result && j.result.added) || 0;
-      toast(n ? `Added ${n} pattern(s)` : "Done — no new PDFs found");
+      toast(n ? `Added ${n} pattern(s)` : "Done. No new PDFs found.");
       close();
       await refreshStats();
       if (route().name === "library") renderLibrary();
@@ -537,7 +539,7 @@ async function renderGuide(pane, p) {
     current.showTab("ask", { prefill: `Make me a shopping list for this pattern: the leather, hardware, thread and finishing products${need ? " plus the tools I'm missing" : ""}. Find shops that ship to me, with rough prices.${need}`, send: true });
   });
   $("#regen").addEventListener("click", async () => {
-    const j = await api(`/api/patterns/${p.id}/guide`, { method: "POST" });
+    await api(`/api/patterns/${p.id}/guide`, { method: "POST" });
     p.guide = null;
     renderGuide(pane, p);
   });
@@ -579,7 +581,7 @@ function firstOpen(steps, done) { for (let i = 0; i < steps.length; i++) if (!do
 
 /* ------------------------------------------------------------------ chat */
 const PATTERN_STARTERS = [
-  "I'm a complete beginner — what should I practise before starting this one?",
+  "I'm a complete beginner. What should I practise before starting this one?",
   "Which parts of this pattern are the hardest, and how do I get them right?",
   "Can I make this with thinner or cheaper leather?",
   "What can I make if I don't have all the hardware?",
@@ -590,7 +592,7 @@ const GENERAL_STARTERS = [
   "How do I get smooth, burnished edges?",
   "Explain leather thickness: oz vs mm, and what to use for what",
   "What's the minimum toolkit I need to start?",
-  "Where can I buy veg-tan leather in the Netherlands?",
+  "Where can I buy veg-tan leather near me?",
 ];
 
 async function renderChat(pane, { patternId = null, prefill = "", send = false, chatId = null } = {}) {

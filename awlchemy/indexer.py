@@ -9,6 +9,7 @@ the tutor), and a cover image of the finished design.
 from __future__ import annotations
 
 import re
+import shutil
 import zipfile
 from collections import defaultdict
 from pathlib import Path
@@ -163,12 +164,13 @@ def extract_zips(root: Path, log: Log) -> None:
         target = z.with_suffix("")
         if target.exists():
             continue
+        root = target.resolve()
         try:
             with zipfile.ZipFile(z) as zf:
                 for member in zf.infolist():
                     dest = (target / member.filename).resolve()
-                    if not str(dest).startswith(str(target.resolve())):
-                        continue  # ignore path-traversal entries
+                    if not dest.is_relative_to(root):
+                        continue  # ignore path-traversal entries such as ../x or ../<name>-evil/x
                     if member.is_dir():
                         dest.mkdir(parents=True, exist_ok=True)
                     else:
@@ -217,6 +219,8 @@ def scan(log: Log = print, only: list[Path] | None = None) -> dict:
 
             if row:
                 pid = row["id"]
+                # the PDF changed, so cached page renders are stale
+                shutil.rmtree(config.DATA_DIR / "pages" / str(pid), ignore_errors=True)
                 conn.execute(
                     "UPDATE patterns SET pages=?, file_size=?, mtime=?, text=?, missing=0 WHERE id=?",
                     (pages, stat.st_size, stat.st_mtime, md, pid),
@@ -250,7 +254,7 @@ def scan(log: Log = print, only: list[Path] | None = None) -> dict:
 
 
 def _dedupe_titles(conn) -> None:
-    """Folders like 'KeyChains' hold several variants with the same name — number them.
+    """Folders like 'KeyChains' hold several variants with the same name, so number them.
     A pattern folder with a single PDF ('Wallet 2/pattern.pdf') takes the folder's name."""
     per_folder: dict[str, list] = defaultdict(list)
     for r in conn.execute("SELECT id, rel_path, title, collection, kind FROM patterns WHERE missing=0 AND source<>'Imported'"):

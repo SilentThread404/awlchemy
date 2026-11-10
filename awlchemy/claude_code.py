@@ -6,17 +6,20 @@ Anthropic API key is needed. Usage counts against that account's plan.
 
 Sessions are locked down: only the tools a feature asks for (Read, WebSearch,
 WebFetch), no Bash or file edits, none of your own Claude Code settings,
-plugins, hooks or MCP servers, and the working directory is data/.
+plugins, hooks or MCP servers, and the working directory is data/. A PreToolUse
+hook (guard_tools) limits Read to pattern files and WebFetch to public sites.
 """
 
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import queue
 import shutil
 import threading
 from pathlib import Path
 from typing import Any, Iterator
+from urllib.parse import urlsplit
 
 import claude_agent_sdk as sdk
 
@@ -51,6 +54,68 @@ def info() -> dict:
             "found": bool(path) or bundled.exists()}
 
 
+# ----------------------------------------------------------------------- tool guard
+# Pattern PDFs and web pages are untrusted text, and a prompt hidden in them could tell
+# Claude to read private files (data/settings.json holds your source links, and Read
+# reaches beyond the working folder) and leak them through a fetched URL, or to fetch
+# this app's own API on 127.0.0.1. Every Read and WebFetch is checked here first.
+
+def _read_roots() -> list[Path]:
+    """The only places a session may Read: patterns, their conversions and page renders, chat photos."""
+    return [p.resolve() for p in (config.LIBRARY_DIR, config.DATA_DIR / "markdown",
+                                  config.DATA_DIR / "pages", config.UPLOAD_DIR)]
+
+
+def read_allowed(file_path: str) -> bool:
+    if not file_path:
+        return False
+    p = Path(file_path)
+    if not p.is_absolute():
+        p = config.DATA_DIR / p  # the session's working folder
+    try:
+        p = p.resolve()
+    except (OSError, RuntimeError):
+        return False
+    return any(p.is_relative_to(root) for root in _read_roots())
+
+
+async def fetch_allowed(url: str) -> bool:
+    """Only public http(s) hosts: never this computer or the local network."""
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https") or not host:
+        return False
+    if host == "localhost" or host.endswith((".localhost", ".local", ".internal", ".lan", ".home.arpa")):
+        return False
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, None)
+    except OSError:
+        return True  # doesn't resolve here, so it can't reach anything local either
+    return all(ipaddress.ip_address(info[4][0].split("%")[0]).is_global for info in infos)
+
+
+def _deny(reason: str) -> dict:
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                   "permissionDecisionReason": reason}}
+
+
+async def guard_tools(input_data: dict, _tool_use_id: str | None, _context: Any) -> dict:
+    """PreToolUse hook. Returns {} to let the normal rules decide, or a deny."""
+    try:
+        name = input_data.get("tool_name")
+        args = input_data.get("tool_input") or {}
+        if name == "Read" and not read_allowed(str(args.get("file_path") or "")):
+            return _deny("Awlchemy only lets the teacher read pattern files, their page images and chat photos.")
+        if name == "WebFetch" and not await fetch_allowed(str(args.get("url") or "")):
+            return _deny("Awlchemy only lets the teacher fetch public web pages.")
+        return {}
+    except Exception:  # noqa: BLE001 - a broken check must fail closed
+        return _deny("Awlchemy couldn't check this tool call, so it was blocked.")
+
+
 def options(settings: dict, *, system: str, tools: list[str], schema: dict | None = None,
             resume: str | None = None, stream: bool = False, max_turns: int = 30) -> sdk.ClaudeAgentOptions:
     return sdk.ClaudeAgentOptions(
@@ -65,6 +130,7 @@ def options(settings: dict, *, system: str, tools: list[str], schema: dict | Non
         cwd=str(config.DATA_DIR),
         add_dirs=[str(config.LIBRARY_DIR)],
         env={"ANTHROPIC_API_KEY": ""},  # always use the Claude Code sign-in, never an API key
+        hooks={"PreToolUse": [sdk.HookMatcher(matcher="Read|WebFetch", hooks=[guard_tools])]},
         output_format={"type": "json_schema", "schema": schema} if schema else None,
         resume=resume,
         include_partial_messages=stream,

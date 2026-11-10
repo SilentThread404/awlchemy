@@ -39,6 +39,8 @@ def fake_run(prompt, opts):
     assert opts.permission_mode == "dontAsk" and opts.setting_sources == [] and opts.strict_mcp_config
     assert opts.env.get("ANTHROPIC_API_KEY") == ""
     assert not {"Bash", "Write", "Edit"} & set(opts.tools)
+    guard = opts.hooks["PreToolUse"][0]
+    assert guard.matcher == "Read|WebFetch" and guard.hooks == [cc.guard_tools]
     schema = (opts.output_format or {}).get("schema") or {}
     if "steps" in schema.get("properties", {}):  # build guide
         assert opts.tools == ["Read"] and "page 1:" in prompt, prompt[:200]

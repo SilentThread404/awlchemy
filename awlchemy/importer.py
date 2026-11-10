@@ -5,7 +5,7 @@ Supported links:
   * Google Drive file / Google Doc -> downloaded as PDF
   * Direct link to a .pdf or .zip
   * A web page that links to PDFs -> every linked PDF on the page is downloaded
-Paid shops that need a login (Etsy, Gumroad...) can't be fetched — download
+Paid shops that need a login (Etsy, Gumroad...) can't be fetched. Download
 those in the browser and drop the file into the app instead.
 """
 
@@ -129,8 +129,7 @@ def import_upload(filename: str, fileobj, collection: str | None) -> Path:
     name = safe_name(Path(filename).name)
     if not name.lower().endswith((".pdf", ".zip")):
         raise ValueError(f"{name}: only PDF or ZIP files can be added")
-    stem = Path(name).stem
-    out = _target_dir(collection, stem if name.lower().endswith(".pdf") else stem)
+    out = _target_dir(collection, Path(name).stem)
     dest = out / name
     with open(dest, "wb") as fh:
         shutil.copyfileobj(fileobj, fh)

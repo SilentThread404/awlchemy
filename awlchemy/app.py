@@ -8,7 +8,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from urllib.parse import urlsplit
+
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -16,7 +18,7 @@ from pydantic import BaseModel
 from . import claude_code, config, db, importer, indexer, jobs, sources, tutor
 
 STATIC = Path(__file__).resolve().parent / "static"
-SYNC_KEY = "library"  # sync, import and index all touch the library — never run two at once
+SYNC_KEY = "library"  # sync, import and index all touch the library, so never run two at once
 
 
 # --------------------------------------------------------------------------- background work
@@ -47,6 +49,23 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Awlchemy", lifespan=lifespan)
+
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+@app.middleware("http")
+async def local_only(request: Request, call_next):
+    """Binding to 127.0.0.1 doesn't stop a web page in your browser from reaching the app.
+    Refuse other Host names (DNS rebinding) and cross-site writes (CSRF)."""
+    host = request.headers.get("host", "")
+    if urlsplit(f"//{host}").hostname not in LOCAL_HOSTS:
+        return JSONResponse({"detail": "Awlchemy only answers on 127.0.0.1."}, status_code=403)
+    if request.method not in SAFE_METHODS:
+        origin = request.headers.get("origin")
+        if request.headers.get("sec-fetch-site") == "cross-site" or (origin and urlsplit(origin).netloc != host):
+            return JSONResponse({"detail": "Requests from other websites are refused."}, status_code=403)
+    return await call_next(request)
 
 
 # --------------------------------------------------------------------------- helpers
@@ -186,7 +205,7 @@ def page_preview(pid: int, page: int, w: int = 900):
 
 @app.get("/files/{pid}/{name}")
 def pdf_file(pid: int, name: str):
-    """The original PDF, untouched — this is what you print (at 100% / Actual size)."""
+    """The original, untouched PDF. This is what you print (at 100% / Actual size)."""
     p = get_pattern(pid)
     path = config.LIBRARY_DIR / p["rel_path"]
     if not path.exists():
@@ -243,7 +262,7 @@ class ImportLink(BaseModel):
 @app.post("/api/import/url")
 def import_link(body: ImportLink):
     if jobs.running(SYNC_KEY):
-        raise HTTPException(409, "The library is busy syncing — try again in a moment.")
+        raise HTTPException(409, "The library is busy syncing. Try again in a moment.")
 
     def work(log):
         files = importer.import_url(body.url, body.collection or None, log)
@@ -258,7 +277,7 @@ def import_link(body: ImportLink):
 @app.post("/api/import/upload")
 async def import_files(files: list[UploadFile] = File(...), collection: str = Form("")):
     if jobs.running(SYNC_KEY):
-        raise HTTPException(409, "The library is busy syncing — try again in a moment.")
+        raise HTTPException(409, "The library is busy syncing. Try again in a moment.")
     saved = []
     try:
         for f in files:
@@ -366,7 +385,10 @@ def get_settings():
 @app.put("/api/settings")
 def put_settings(body: dict):
     if "toolkit" in body:
-        body["toolkit"] = sorted({t.strip() for t in body["toolkit"] if t and t.strip()}, key=str.lower)
+        if not isinstance(body["toolkit"], list):
+            raise HTTPException(400, "toolkit must be a list of tool names")
+        body["toolkit"] = sorted({t.strip() for t in body["toolkit"] if isinstance(t, str) and t.strip()},
+                                 key=str.lower)
     body.pop("last_sync", None)
     body.pop("sources", None)  # managed through /api/sources so they're validated
     config.save_settings(body)
