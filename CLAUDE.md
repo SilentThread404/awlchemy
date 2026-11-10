@@ -29,11 +29,12 @@ Tests are pytest and fully offline. Run `uv run pytest` for all of them, or `uv 
 
 **Paths and state** (`config.py`): every path derives from `ROOT`, which is `AWLCHEMY_HOME` or the repo root. `library/<source name>/` holds one mirror per source and `library/Imported/` holds importer additions. `data/` holds `awlchemy.db`, `settings.json` (including the sources) and the generated files. Both directories are git-ignored and hold purchased content and personal data.
 
-**Open-source hygiene:** the code must never contain a real pattern-folder link, seller name or pattern text. Sources exist only in `data/settings.json`. Fixtures and `awlchemy/knowledge/*.md` are original text, and users can add their own notes in `data/knowledge/`, which `tutor._knowledge()` also loads.
+**Open-source hygiene:** the code must never contain a real pattern-folder link, seller name or pattern text. Sources exist only in `data/settings.json`. The one exception is `config.STARTER_SOURCES`: public catalogues of *free* patterns whose terms allow downloading for personal use. They are only offered (the user clicks to add them), their files are downloaded onto the user's computer and never committed, and paid or shared-folder links still never go in the code. Fixtures and `awlchemy/knowledge/*.md` are original text, and users can add their own notes in `data/knowledge/`, which `tutor._knowledge()` also loads.
 
 **Pipeline:** `sources` → `indexer` → `tutor`, with the disk as the source of truth.
 
-- `sources.py` stores sources as `{name, kind: gdrive|folder, location, enabled}`, validated in `add_source` and managed through `/api/sources` and the `source` CLI command (`PUT /api/settings` ignores `sources`).
+- `sources.py` stores sources as `{name, kind: gdrive|folder|web, location, enabled}`, validated in `add_source` and managed through `/api/sources` and the `source` CLI command (`PUT /api/settings` ignores `sources`). `/api/starters` lists the `STARTER_SOURCES` offers and adds one on request.
+  - A `web` source goes through `web_sync.sync_catalogue`: it reads the catalogue page, follows its pattern pages (and one level deeper from its "free" round-up pages, never the site's general index), and downloads every `.pdf`, `.zip` or `/download/<id>/` link into `library/<source>/<pattern name>/`, with a manifest keyed by download link.
   - `sync_all()` mirrors each enabled source into `library/<name>/`. A `gdrive` source goes through `drive_sync.sync_folder`. A `folder` source goes through `mirror_folder`, which copies PDFs/ZIPs with `copy2` and skips files whose size and mtime are unchanged.
   - One failing source is recorded in `errors` and doesn't stop the others.
   - `config._migrate()` turns the legacy single `drive_folder` setting into a source.

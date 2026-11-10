@@ -104,3 +104,9 @@ def test_paper_sizes_are_folded_into_their_pattern(client):
     belt = [p for p in pats if p["collection"] == "Belt"]  # only paper sizes: the A4 copy is shown
     assert len(belt) == 1 and belt[0]["paper"] == "A4" and belt[0]["papers"] == ["A4", "Letter"]
     assert client.get("/api/stats").json()["total"] == len(client.get("/api/patterns", params={"kind": ""}).json())
+
+
+def test_each_piece_of_a_sizes_only_download_gets_one_card(client):
+    pats = [p for p in client.get("/api/patterns").json() if p["collection"] == "Traveler Set"]
+    assert sorted(p["title"] for p in pats) == ["MAKER Traveler Cover", "MAKER Traveler Divider"]
+    assert all(p["papers"] == ["A4", "Letter"] for p in pats)

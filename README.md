@@ -13,6 +13,8 @@ Plug in your own patterns: a shared Google Drive folder, a folder on your comput
 - **Keeps your pattern sources in sync.** Add as many sources as you like. Each one is mirrored into its own folder in `library/`, and later checks only fetch new files.
   - **Google Drive folder** shared as "Anyone with the link". No Google login or API key is needed.
   - **Local or network folder.** New and changed PDFs/ZIPs are copied in.
+  - **A web page that lists free patterns.** Each pattern page it links to is visited and its PDF or ZIP downloaded.
+  - **Free starter patterns.** With an empty library, or under Settings, one click adds MAKESUPPLY's free templates (about 60 patterns). Nothing is downloaded until you click, and their terms ask you not to share the files.
 - **Builds a library you can browse.** Every PDF gets:
   - a cover image
   - a difficulty, taken from folders named like `1. EASY`, `2. MEDIUM`, `3. HARD`, `4. VERY HARD`

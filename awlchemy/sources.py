@@ -7,6 +7,7 @@ then scans. Two kinds are supported:
             (incremental: only files not downloaded before are fetched)
   * folder  a folder on this computer or a network share, e.g. a Dropbox or
             OneDrive folder (incremental: only new or changed files are copied)
+  * web     a public web page listing free patterns (see web_sync.py)
 
 Sources are stored in data/settings.json under "sources", never in the code,
 so the links to patterns you bought stay on your computer.
@@ -20,10 +21,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import config, drive_sync, jobs
+from . import config, drive_sync, jobs, web_sync
 
 Log = Callable[[str], None]
-KINDS = ("gdrive", "folder")
+KINDS = ("gdrive", "folder", "web")
 COPY_SUFFIXES = {".pdf", ".zip"}
 RESERVED = {"imported"}  # library/Imported/ belongs to the importer
 
@@ -41,9 +42,12 @@ def detect_kind(location: str) -> str:
         return "gdrive"
     if parsed:
         raise ValueError("That's a link to a single file. Use Import for single files; a source must be a folder.")
+    if location.lower().startswith(("http://", "https://")):
+        return "web"
     if Path(location).expanduser().is_dir():
         return "folder"
-    raise ValueError("Give a shared Google Drive folder link, or the path of a folder on this computer.")
+    raise ValueError("Give a shared Google Drive folder link, a web page listing free patterns, "
+                     "or the path of a folder on this computer.")
 
 
 def target_dir(source: dict) -> Path:
@@ -74,6 +78,19 @@ def add_source(name: str, location: str, kind: str | None = None) -> dict:
     return source
 
 
+def starters() -> list[dict]:
+    """The free catalogues the app offers to add, each marked with whether it's already a source."""
+    have = {s["location"].rstrip("/").lower() for s in list_sources()}
+    return [{**s, "added": s["location"].rstrip("/").lower() in have} for s in config.STARTER_SOURCES]
+
+
+def add_starter(key: str) -> dict:
+    s = next((s for s in config.STARTER_SOURCES if s["key"] == key), None)
+    if s is None:
+        raise ValueError(f"No starter pack called '{key}'.")
+    return add_source(s["name"], s["location"], "web")
+
+
 def remove_source(name: str) -> None:
     """Forget a source. Files already in library/<name>/ are kept."""
     current = list_sources()
@@ -96,6 +113,10 @@ def sync_all(log: Log = print, dry_run: bool = False, only: str | None = None) -
         try:
             if s["kind"] == "gdrive":
                 r = drive_sync.sync_folder(s["location"], target_dir(s), dry_run=dry_run, log=log)
+                totals.downloaded += r.downloaded
+                totals.failed += r.failed
+            elif s["kind"] == "web":
+                r = web_sync.sync_catalogue(s["location"], target_dir(s), dry_run=dry_run, log=log)
                 totals.downloaded += r.downloaded
                 totals.failed += r.failed
             else:

@@ -420,6 +420,20 @@ def add_source(body: NewSource):
     return {"source": src, "job": start_sync()}
 
 
+@app.get("/api/starters")
+def list_starters():
+    return sources.starters()
+
+
+@app.post("/api/starters/{key}")
+def add_starter(key: str):
+    try:
+        src = sources.add_starter(key)
+    except ValueError as ex:
+        raise HTTPException(400, str(ex))
+    return {"source": src, "job": start_sync()}
+
+
 @app.delete("/api/sources/{name}")
 def remove_source(name: str):
     try:

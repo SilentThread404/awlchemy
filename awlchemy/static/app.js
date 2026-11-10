@@ -339,10 +339,40 @@ async function renderLibrary() {
           ${s.library_job || !s.source_count ? "" : `<p><button class="btn primary" id="first-sync">Fetch my patterns</button></p>`}</div>`
       : `<div class="empty"><h2>No matches</h2><p>Try fewer words or clear a filter.</p></div>`;
     $("#first-sync")?.addEventListener("click", async () => { await api("/api/sync", { method: "POST" }); refreshStats(); });
+    if (nothing) {
+      const offers = (await api("/api/starters")).filter((x) => !x.added);
+      if (offers.length) {
+        $(".empty", results).insertAdjacentHTML("beforeend", `<div class="starters">${offers.map(starterCard).join("")}</div>`);
+        bindStarters(results);
+      }
+    }
     return;
   }
   results.innerHTML = `<div class="grid">${items.map(card).join("")}</div>`;
   bindFavs(results);
+}
+
+/* Free pattern catalogues the app offers; nothing is fetched until the user clicks. */
+function starterCard(x) {
+  return `<div class="starter">
+      <h3>Start with free patterns from ${esc(x.site)}</h3>
+      <p>${esc(x.about)}</p>
+      <p class="muted small">${esc(x.terms_summary)} <a href="${esc(x.terms)}" target="_blank" rel="noopener">Read their terms</a></p>
+      ${x.added ? `<p class="muted small">Added. They're in your library under “${esc(x.name)}”.</p>`
+        : `<button class="btn primary" data-starter="${esc(x.key)}">Add the free patterns</button>`}
+    </div>`;
+}
+
+function bindStarters(root, after) {
+  $$("[data-starter]", root).forEach((b) => b.addEventListener("click", async () => {
+    b.disabled = true;
+    try {
+      await api(`/api/starters/${encodeURIComponent(b.dataset.starter)}`, { method: "POST" });
+      toast("Added. Downloading the free patterns…");
+      await refreshStats();
+      after ? after() : render();
+    } catch (e) { b.disabled = false; toast(e.message, 6000); }
+  }));
 }
 
 /* ------------------------------------------------------------------ bench */
@@ -440,7 +470,7 @@ function printBox(p, pdf) {
   const sorted = [...prints].sort((a, b) => (b.paper === home) - (a.paper === home));
   const fileUrl = (v) => `/files/${v.id}/${encodeURIComponent(v.rel_path.split("/").pop())}`;
   const sizes = sorted.map((v, i) => `<a class="size ${i === 0 ? "first" : ""}" href="${fileUrl(v)}" target="_blank" rel="noopener">
-      <strong>${esc(v.paper)}</strong><span>${plural(v.pages || 0, "page")} · ${PAPER_HINT[v.paper] || "printer"}</span></a>`).join("");
+      <strong>${esc(v.paper)}${v.label ? `<small>${esc(v.label)}</small>` : ""}</strong><span>${plural(v.pages || 0, "page")} · ${PAPER_HINT[v.paper] || "printer"}</span></a>`).join("");
   const instructions = p.paper ? "" : `<p class="small"><a href="${pdf}" target="_blank" rel="noopener">Open the instructions PDF</a></p>`;
   const tiled = prints.some((v) => PAPER_HINT[v.paper] === "home printer") && prints.some((v) => /^A[0-2]$/.test(v.paper));
   return `<div class="print-box">
@@ -916,10 +946,11 @@ async function renderSettings() {
       <h3 style="margin-top:0">Pattern sources</h3>
       <p class="muted small">Where your patterns live. Each source is copied into its own folder in the library, and later checks only fetch new files.</p>
       <div id="src-list"></div>
+      <div id="starters"></div>
       <label for="src-name">Add a source</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <input type="text" id="src-name" placeholder="Name, e.g. My patterns" style="max-width:200px">
-        <input type="text" id="src-loc" placeholder="Shared Google Drive folder link, or a folder path like D:\\Patterns" style="flex:1;min-width:220px">
+        <input type="text" id="src-loc" placeholder="Shared Google Drive folder, a web page of free patterns, or a folder like D:\\Patterns" style="flex:1;min-width:220px">
         <button class="btn" id="src-add">Add</button>
       </div>
       <div class="hint">Google Drive folders must be shared as “Anyone with the link”. No Google login is used.</div>
@@ -945,7 +976,7 @@ async function renderSettings() {
   });
   const drawSources = (list) => {
     $("#src-list").innerHTML = list.length
-      ? list.map((x) => `<div class="toolkit-edit" style="margin:4px 0"><span><strong>${esc(x.name)}</strong>&nbsp;<span class="muted small">${x.kind === "gdrive" ? "Google Drive" : "Folder"} · ${esc(x.location)}</span><button data-src="${esc(x.name)}" aria-label="Remove ${esc(x.name)}">×</button></span></div>`).join("")
+      ? list.map((x) => `<div class="toolkit-edit" style="margin:4px 0"><span><strong>${esc(x.name)}</strong>&nbsp;<span class="muted small">${{ gdrive: "Google Drive", web: "Website" }[x.kind] || "Folder"} · ${esc(x.location)}</span><button data-src="${esc(x.name)}" aria-label="Remove ${esc(x.name)}">×</button></span></div>`).join("")
       : `<p class="muted small">No sources yet.</p>`;
     $$("[data-src]").forEach((b) => b.addEventListener("click", async () => {
       drawSources(await api(`/api/sources/${encodeURIComponent(b.dataset.src)}`, { method: "DELETE" }));
@@ -953,6 +984,12 @@ async function renderSettings() {
     }));
   };
   drawSources(s.sources || []);
+  const drawStarters = async () => {
+    const offers = (await api("/api/starters")).filter((x) => !x.added);
+    $("#starters").innerHTML = offers.map(starterCard).join("");
+    bindStarters($("#starters"), async () => { drawSources(await api("/api/sources")); drawStarters(); });
+  };
+  drawStarters();
   $("#src-add").addEventListener("click", async () => {
     try {
       await api("/api/sources", { json: { name: $("#src-name").value, location: $("#src-loc").value } });
