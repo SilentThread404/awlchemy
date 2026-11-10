@@ -101,7 +101,8 @@ def http_get(url: str, retries: int = 3):
             return urllib.request.urlopen(req, timeout=60)
         except urllib.error.HTTPError as e:
             if e.code in (401, 403, 404):
-                raise RuntimeError(f"Drive answered {e.code} — is it shared as 'anyone with the link'?") from e
+                raise RuntimeError(f"The server answered {e.code}. If this is a Google Drive link, "
+                                   "check that it's shared as 'Anyone with the link'.") from e
             last_err = e
         except (urllib.error.URLError, TimeoutError) as e:
             last_err = e
@@ -188,7 +189,7 @@ def download_single_file(file_id: str, out_dir: Path, gdoc_type: str | None = No
     with http_get(url) as resp:
         ctype = resp.headers.get("Content-Type", "")
         if "text/html" in ctype:
-            raise RuntimeError("Drive returned a web page instead of the file — check the file is shared publicly")
+            raise RuntimeError("Drive returned a web page instead of the file. Check that the file is shared publicly.")
         name = filename_from_headers(resp.headers, f"{file_id}.pdf")
         if kind == "gdoc" and not name.lower().endswith(".pdf"):
             name += ".pdf"

@@ -227,7 +227,7 @@ def generate_guide(pid: int, log=print) -> dict:
     res, _ = _collect(prompt, opts, log)
     guide = res.structured_output
     if not isinstance(guide, dict) or not guide.get("steps"):
-        raise TutorError("Claude didn't return a guide — try again.")
+        raise TutorError("Claude didn't return a guide. Try again.")
     with db.session() as conn:
         conn.execute("UPDATE patterns SET guide=?, guide_model=?, guide_at=? WHERE id=?",
                      (json.dumps(guide, ensure_ascii=False), settings["model"], db.now(), pid))

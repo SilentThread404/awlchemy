@@ -15,7 +15,7 @@ def client():
     config.save_settings({"auto_sync_on_start": False, "sources": []})
     from awlchemy import app as appmod
 
-    with TestClient(appmod.app) as c:
+    with TestClient(appmod.app, base_url="http://127.0.0.1:8765") as c:
         wait(jobs.running("library"))
         yield c
 
@@ -65,6 +65,23 @@ def test_chat_resumes_its_session(client):
     assert fake_claude.CALLS[-1][1].resume == "session-1"
     msgs = client.get(f"/api/chats/{cid}").json()["messages"]
     assert [m["role"] for m in msgs] == ["user", "assistant", "user", "assistant"]
+
+
+def test_other_host_names_are_refused(client):
+    """DNS rebinding: a page on evil.example resolved to 127.0.0.1 sends Host: evil.example."""
+    assert client.get("/api/settings", headers={"host": "evil.example:8765"}).status_code == 403
+    assert client.get("/api/settings", headers={"host": "localhost:8765"}).status_code == 200
+
+
+def test_cross_site_writes_are_refused(client):
+    assert client.post("/api/sync", headers={"origin": "https://evil.example"}).status_code == 403
+    assert client.post("/api/reindex", headers={"sec-fetch-site": "cross-site"}).status_code == 403
+    assert client.post("/api/reindex", headers={"origin": "http://127.0.0.1:8765"}).status_code == 200
+    wait(jobs.running("library"))
+
+
+def test_settings_reject_a_non_list_toolkit(client):
+    assert client.put("/api/settings", json={"toolkit": "awl"}).status_code == 400
 
 
 def test_general_chat_gets_library_overview(client):

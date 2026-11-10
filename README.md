@@ -34,7 +34,7 @@ Plug in your own patterns: a shared Google Drive folder, a folder on your comput
 ## Requirements
 
 - Windows, macOS or Linux, with [uv](https://docs.astral.sh/uv/) (it installs Python 3.13 for you).
-- [Claude Code](https://claude.com/claude-code), signed in with your Claude account. The teacher runs through Claude Code on your computer, so there's **no API key**, and usage counts against your Claude plan.
+- [Claude Code](https://claude.com/claude-code), signed in with your Claude account. The teacher runs through Claude Code on your computer, so there's no API key, and usage counts against your Claude plan.
   The library, sync and import all work without it; only guides, videos and the teacher need it.
 
 ## Getting started
@@ -81,9 +81,12 @@ data/thumbs, data/markdown, data/pages   generated previews and text
 ## How the AI part works
 
 Guides, chats and video searches run as Claude Code sessions through the [Claude Agent SDK](https://docs.claude.com/en/docs/agent-sdk/overview).
-- **What Claude reads:** the app renders every page to an image and points Claude at those images plus the Markdown text, so it sees the drawings.
-- **Locked-down sessions:** a session can only read files and search the web. It can't run commands or change files, and it doesn't load your own Claude Code settings, plugins or MCP servers.
-- **Models:** Opus writes the most careful guides but uses your plan's limits fastest; Haiku uses the least. Pick one in Settings.
+
+The app renders every page of a pattern to an image and points Claude at those images plus the Markdown text, so Claude sees the drawings as well as the words.
+
+Each session can only read files and search the web. It can't run commands or change files, and it doesn't load your own Claude Code settings, plugins or MCP servers. A pattern or web page can't talk Claude into more than that either. It can only open your patterns, their page images and your chat photos, never your settings or other files on the computer. It also can't fetch anything on your own computer or home network.
+
+You pick the model in Settings. Opus writes the most careful guides but uses your plan's limits fastest; Haiku uses the least.
 
 ## Respect pattern licences
 
