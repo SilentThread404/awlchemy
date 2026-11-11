@@ -7,6 +7,7 @@ then scans. Two kinds are supported:
             (incremental: only files not downloaded before are fetched)
   * folder  a folder on this computer or a network share, e.g. a Dropbox or
             OneDrive folder (incremental: only new or changed files are copied)
+  * web     a public web page listing free patterns (see web_sync.py)
 
 Sources are stored in data/settings.json under "sources", never in the code,
 so the links to patterns you bought stay on your computer.
@@ -15,14 +16,15 @@ so the links to patterns you bought stay on your computer.
 from __future__ import annotations
 
 import shutil
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import config, drive_sync
+from . import config, drive_sync, jobs, web_sync
 
 Log = Callable[[str], None]
-KINDS = ("gdrive", "folder")
+KINDS = ("gdrive", "folder", "web")
 COPY_SUFFIXES = {".pdf", ".zip"}
 RESERVED = {"imported"}  # library/Imported/ belongs to the importer
 
@@ -40,9 +42,12 @@ def detect_kind(location: str) -> str:
         return "gdrive"
     if parsed:
         raise ValueError("That's a link to a single file. Use Import for single files; a source must be a folder.")
+    if location.lower().startswith(("http://", "https://")):
+        return "web"
     if Path(location).expanduser().is_dir():
         return "folder"
-    raise ValueError("Give a shared Google Drive folder link, or the path of a folder on this computer.")
+    raise ValueError("Give a shared Google Drive folder link, a web page listing free patterns, "
+                     "or the path of a folder on this computer.")
 
 
 def target_dir(source: dict) -> Path:
@@ -73,6 +78,19 @@ def add_source(name: str, location: str, kind: str | None = None) -> dict:
     return source
 
 
+def starters() -> list[dict]:
+    """The free catalogues the app offers to add, each marked with whether it's already a source."""
+    have = {s["location"].rstrip("/").lower() for s in list_sources()}
+    return [{**s, "added": s["location"].rstrip("/").lower() in have} for s in config.STARTER_SOURCES]
+
+
+def add_starter(key: str) -> dict:
+    s = next((s for s in config.STARTER_SOURCES if s["key"] == key), None)
+    if s is None:
+        raise ValueError(f"No starter pack called '{key}'.")
+    return add_source(s["name"], s["location"], "web")
+
+
 def remove_source(name: str) -> None:
     """Forget a source. Files already in library/<name>/ are kept."""
     current = list_sources()
@@ -89,11 +107,16 @@ def sync_all(log: Log = print, dry_run: bool = False, only: str | None = None) -
         raise ValueError(f"No enabled source called '{only}'.")
     if not chosen:
         log("No pattern sources yet. Add a Google Drive folder or a local folder under Settings.")
-    for s in chosen:
+    for i, s in enumerate(chosen, 1):
         log(f"Checking '{s['name']}' for new files…")
+        jobs.report(log, source=s["name"], source_kind=s["kind"], source_index=i, source_count=len(chosen))
         try:
             if s["kind"] == "gdrive":
                 r = drive_sync.sync_folder(s["location"], target_dir(s), dry_run=dry_run, log=log)
+                totals.downloaded += r.downloaded
+                totals.failed += r.failed
+            elif s["kind"] == "web":
+                r = web_sync.sync_catalogue(s["location"], target_dir(s), dry_run=dry_run, log=log)
                 totals.downloaded += r.downloaded
                 totals.failed += r.failed
             else:
@@ -111,7 +134,9 @@ def mirror_folder(src: Path, dest: Path, *, dry_run: bool = False, log: Log = pr
     A file is copied when it's new or its size or modification time changed."""
     if not src.is_dir():
         raise FileNotFoundError(f"Folder not found: {src}")
-    copied: list[Path] = []
+    jobs.report(log, phase="listing", folders=0, found=0, have=0)
+    todo: list[tuple[Path, Path]] = []
+    have = 0
     for f in sorted(src.rglob("*")):
         if not f.is_file() or f.suffix.lower() not in COPY_SUFFIXES:
             continue
@@ -120,10 +145,22 @@ def mirror_folder(src: Path, dest: Path, *, dry_run: bool = False, log: Log = pr
         if out.exists():
             ost = out.stat()
             if ost.st_size == st.st_size and int(ost.st_mtime) == int(st.st_mtime):
+                have += 1
                 continue
+        todo.append((f, out))
+    jobs.report(log, found=len(todo), have=have)
+
+    jobs.report(log, phase="downloading", phase_started=time.time(), done=0, total=len(todo),
+                failed=0, bytes=0, current="")
+    copied: list[Path] = []
+    got = 0
+    for i, (f, out) in enumerate(todo):
         log(f"  + {out.relative_to(dest).as_posix()}")
         if not dry_run:
+            jobs.report(log, current=out.name)
             out.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(f, out)  # copy2 keeps the mtime, so the next run can skip it
+            got += out.stat().st_size
         copied.append(out)
+        jobs.report(log, done=i + 1, bytes=got)
     return copied

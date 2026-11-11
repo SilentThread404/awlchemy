@@ -20,6 +20,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Callable
 
+from . import jobs
+
 MANIFEST_NAME = ".sync-manifest.json"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) awlchemy-sync/1.0"
 
@@ -234,7 +236,10 @@ def sync_folder(
 
     seen_folders: set[str] = set()
     stack: list[tuple[str, Path]] = [(folder_id, Path())]
+    pending: list[tuple[Entry, Path]] = []
 
+    # First walk every folder, so the download phase knows how many files there are.
+    jobs.report(log, phase="listing", folders=0, found=0, have=0)
     while stack:
         fid, rel = stack.pop()
         if fid in seen_folders:
@@ -244,7 +249,6 @@ def sync_folder(
         if result.folder_title is None:
             result.folder_title = title
         log(f"[{rel.as_posix() or '/'}] {len(entries)} item(s)")
-        time.sleep(delay)
 
         for e in entries:
             name = safe_name(e.title)
@@ -255,31 +259,40 @@ def sync_folder(
                 continue
             if e.kind == "gdoc" and not name.lower().endswith(".pdf"):
                 name += ".pdf"
-
-            rel_path = rel / name
             record = known.get(e.id)
             if record and (out_dir / record["path"]).exists():
                 result.skipped += 1
-                continue
+            else:
+                pending.append((e, rel / name))
+        jobs.report(log, folders=len(seen_folders), found=len(pending), have=result.skipped)
+        time.sleep(delay)
 
-            log(f"  + {rel_path.as_posix()}")
-            if dry_run:
-                result.downloaded.append(out_dir / rel_path)
-                continue
-            try:
-                size = download(file_url(e.kind, e.id, e.gdoc_type), out_dir / rel_path)
-            except Exception as ex:  # keep going; it will be retried next run
-                result.failed += 1
-                log(f"    ! failed: {ex}")
-                continue
-            known[e.id] = {
-                "path": rel_path.as_posix(),
-                "size": size,
-                "downloaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            }
-            save_manifest(manifest_path, manifest)
+    jobs.report(log, phase="downloading", phase_started=time.time(), done=0, total=len(pending),
+                failed=0, bytes=0, current="")
+    got = 0
+    for i, (e, rel_path) in enumerate(pending):
+        log(f"  + {rel_path.as_posix()}")
+        if dry_run:
             result.downloaded.append(out_dir / rel_path)
-            time.sleep(delay)
+            continue
+        jobs.report(log, current=rel_path.name)
+        try:
+            size = download(file_url(e.kind, e.id, e.gdoc_type), out_dir / rel_path)
+        except Exception as ex:  # keep going; it will be retried next run
+            result.failed += 1
+            log(f"    ! failed: {ex}")
+            jobs.report(log, done=i + 1, failed=result.failed)
+            continue
+        known[e.id] = {
+            "path": rel_path.as_posix(),
+            "size": size,
+            "downloaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        save_manifest(manifest_path, manifest)
+        result.downloaded.append(out_dir / rel_path)
+        got += size
+        jobs.report(log, done=i + 1, bytes=got)
+        time.sleep(delay)
 
     verb = "would download" if dry_run else "downloaded"
     log(f"Done: {len(result.downloaded)} {verb}, {result.skipped} already present, {result.failed} failed.")

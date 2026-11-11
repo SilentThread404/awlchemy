@@ -1,6 +1,7 @@
 """Offline tests of the Google Drive mirror: page parsing and incremental behaviour."""
 import io
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,7 @@ class Resp(io.BytesIO):
         return self
 
     def __exit__(self, *a):
-        pass
+        time.sleep(0.01)
 
 
 @pytest.fixture
@@ -89,3 +90,17 @@ def test_refused_download_is_retried_later(fake_drive, monkeypatch):
 
     monkeypatch.setattr(ds, "http_get", real)  # quota reset: the three failures are fetched now
     assert len(ds.sync_folder("ROOT", out, delay=0, log=lambda s: None).downloaded) == 3
+
+
+def test_progress_is_reported_for_the_ui(fake_drive):
+    """The library page shows 'Downloading 2 of 4' and a time estimate from these fields."""
+    from awlchemy import jobs
+
+    out = Path(tempfile.mkdtemp())
+    job = jobs.start("sync", lambda log: ds.sync_folder("ROOT", out, delay=0, log=log))
+    while jobs.get(job["id"])["status"] == "running":
+        time.sleep(0.01)
+    p = jobs.get(job["id"])["progress"]
+    assert p["phase"] == "downloading" and p["done"] == p["total"] == 4
+    assert p["folders"] == 3 and p["found"] == 4 and p["have"] == 0
+    assert p["bytes"] > 0 and p["phase_started"] > 0

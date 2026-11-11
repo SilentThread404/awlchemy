@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS patterns (
     progress     TEXT DEFAULT '[]',        -- JSON list of completed step indexes
     guide        TEXT,                     -- JSON from the tutor
     guide_model  TEXT,
-    guide_at     TEXT
+    guide_at     TEXT,
+    print_of     INTEGER,                  -- a paper-size copy (A4, Letter, A1…) of this pattern id; hidden in the library
+    paper        TEXT                      -- the paper size in the file name, if any
 );
 CREATE INDEX IF NOT EXISTS idx_patterns_collection ON patterns(collection);
 
@@ -100,6 +102,10 @@ def init() -> None:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(chats)")}
         if "session_id" not in cols:  # databases from before the Claude Code switch
             conn.execute("ALTER TABLE chats ADD COLUMN session_id TEXT")
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(patterns)")}
+        for col, typ in (("print_of", "INTEGER"), ("paper", "TEXT")):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE patterns ADD COLUMN {col} {typ}")
 
 
 def row_to_pattern(row: sqlite3.Row, full: bool = False) -> dict:

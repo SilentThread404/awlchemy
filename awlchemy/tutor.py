@@ -123,6 +123,12 @@ def pattern_context(p: dict) -> str:
                      + "\n".join(f"- page {i + 1}: {f}" for i, f in enumerate(imgs)))
     if pages > IMAGE_PAGES_MAX:
         lines.append(f"Only the first {IMAGE_PAGES_MAX} pages are rendered; the text conversion covers the rest.")
+    with db.session() as conn:
+        prints = [v for v in indexer.print_versions(conn, p["id"]) if v["id"] != p["id"]]
+    if prints:
+        lines.append("The pattern pieces also come as separate print files, which the user prints from the app: "
+                     + ", ".join(f"{v['paper']} ({v['pages']} page(s))" for v in prints)
+                     + ". Point to these for printing instead of describing how to print the pieces from this file.")
     return "\n".join(lines)
 
 

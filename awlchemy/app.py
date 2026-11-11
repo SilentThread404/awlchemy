@@ -83,7 +83,7 @@ def get_pattern(pid: int) -> dict:
 @app.get("/api/patterns")
 def list_patterns(q: str = "", difficulty: str = "", kind: str = "pattern", status: str = "",
                   source: str = "", favorite: bool = False):
-    sql = "SELECT * FROM patterns WHERE missing=0"
+    sql = "SELECT * FROM patterns WHERE missing=0 AND print_of IS NULL"
     args: list = []
     if kind:
         sql += " AND kind=?"
@@ -109,6 +109,11 @@ def list_patterns(q: str = "", difficulty: str = "", kind: str = "pattern", stat
     order = {"Easy": 1, "Medium": 2, "Hard": 3, "Very Hard": 4}
     with db.session() as conn:
         rows = [db.row_to_pattern(r) for r in conn.execute(sql, args)]
+        papers: dict[int, list] = {}
+        for r in conn.execute("SELECT id, print_of, paper FROM patterns WHERE missing=0 AND paper IS NOT NULL"):
+            papers.setdefault(r["print_of"] or r["id"], []).append(r["paper"])
+    for r in rows:
+        r["papers"] = sorted(set(papers.get(r["id"], [])), key=indexer.paper_rank)
     rows.sort(key=lambda r: (order.get(r["difficulty"] or "", 5), (r["collection"] or "").lower(), r["title"].lower()))
     return rows
 
@@ -119,7 +124,7 @@ def stats():
         counts = dict(conn.execute(
             "SELECT COUNT(*) total, SUM(kind='pattern') patterns, SUM(kind='guide') guides, "
             "SUM(guide IS NOT NULL) with_guide, SUM(status='in_progress') in_progress, SUM(status='done') done "
-            "FROM patterns WHERE missing=0").fetchone())
+            "FROM patterns WHERE missing=0 AND print_of IS NULL").fetchone())
         sources = [r[0] for r in conn.execute("SELECT DISTINCT source FROM patterns WHERE missing=0 ORDER BY source")]
     s = config.load_settings()
     return {**{k: v or 0 for k, v in counts.items()}, "sources": sources, "last_sync": s.get("last_sync"),
@@ -134,8 +139,9 @@ def pattern_detail(pid: int):
     out["has_text"] = bool((p.get("text") or "").strip())
     with db.session() as conn:
         out["siblings"] = [dict(r) for r in conn.execute(
-            "SELECT id, title FROM patterns WHERE missing=0 AND id<>? AND rel_path LIKE ? ORDER BY title",
+            "SELECT id, title FROM patterns WHERE missing=0 AND print_of IS NULL AND id<>? AND rel_path LIKE ? ORDER BY title",
             (pid, Path(p["rel_path"]).parent.as_posix() + "/%"))][:20]
+        out["prints"] = indexer.print_versions(conn, pid)
     out["videos"] = tutor.videos_for(tutor.guide_techniques(out["guide"])) if out["guide"] else {}
     return out
 
@@ -409,6 +415,20 @@ def list_sources():
 def add_source(body: NewSource):
     try:
         src = sources.add_source(body.name, body.location)
+    except ValueError as ex:
+        raise HTTPException(400, str(ex))
+    return {"source": src, "job": start_sync()}
+
+
+@app.get("/api/starters")
+def list_starters():
+    return sources.starters()
+
+
+@app.post("/api/starters/{key}")
+def add_starter(key: str):
+    try:
+        src = sources.add_starter(key)
     except ValueError as ex:
         raise HTTPException(400, str(ex))
     return {"source": src, "job": start_sync()}

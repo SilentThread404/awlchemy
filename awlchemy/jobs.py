@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import traceback
 import uuid
 from datetime import datetime, timezone
@@ -23,7 +24,7 @@ def start(kind: str, fn: Callable[[Callable[[str], None]], Any], *, exclusive_ke
         if exclusive_key and (jid := _exclusive.get(exclusive_key)) and _jobs[jid]["status"] == "running":
             return public(_jobs[jid])
         jid = uuid.uuid4().hex[:12]
-        job = {"id": jid, "kind": kind, "status": "running", "log": [], "result": None,
+        job = {"id": jid, "kind": kind, "status": "running", "log": [], "progress": {}, "result": None,
                "error": None, "started_at": _now(), "finished_at": None}
         _jobs[jid] = job
         if exclusive_key:
@@ -33,6 +34,13 @@ def start(kind: str, fn: Callable[[Callable[[str], None]], Any], *, exclusive_ke
         job["log"].append(line)
         if len(job["log"]) > 500:
             del job["log"][:100]
+
+    def progress(**fields) -> None:
+        if "phase" in fields and fields["phase"] != job["progress"].get("phase"):
+            fields.setdefault("phase_started", time.time())
+        job["progress"].update(fields)
+
+    log.progress = progress
 
     def run() -> None:
         try:
@@ -50,6 +58,12 @@ def start(kind: str, fn: Callable[[Callable[[str], None]], Any], *, exclusive_ke
     return public(job)
 
 
+def report(log: Callable, **fields) -> None:
+    """Structured progress for the UI (phase, done, total, current…). A no-op for a plain log."""
+    if fn := getattr(log, "progress", None):
+        fn(**fields)
+
+
 def get(jid: str) -> dict | None:
     job = _jobs.get(jid)
     return public(job) if job else None
@@ -63,4 +77,4 @@ def running(exclusive_key: str) -> dict | None:
 
 
 def public(job: dict) -> dict:
-    return {**job, "log": job["log"][-60:]}
+    return {**job, "log": job["log"][-60:], "progress": dict(job["progress"])}

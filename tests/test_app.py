@@ -88,3 +88,25 @@ def test_general_chat_gets_library_overview(client):
     cid = client.post("/api/chats", json={"title": "g"}).json()["id"]
     stream(client, cid, "What should I make next?")
     assert "pattern library" in fake_claude.CALLS[-1][0]
+
+
+def test_paper_sizes_are_folded_into_their_pattern(client):
+    """'Sling Bag A4/Letter/A1.pdf' sit next to the instructions: one card, sizes on the pattern page."""
+    pats = client.get("/api/patterns").json()
+    titles = [p["title"] for p in pats]
+    assert not any(t.startswith("Sling Bag") and t != "Sling Bag 3" for t in titles), titles
+    sling = next(p for p in pats if p["title"] == "Sling Bag 3")  # takes the folder's name
+    assert sling["papers"] == ["A4", "Letter", "A1"]
+    prints = client.get(f"/api/patterns/{sling['id']}").json()["prints"]
+    assert [v["paper"] for v in prints] == ["A4", "Letter", "A1"]
+    assert client.get(f"/files/{prints[0]['id']}/x.pdf").status_code == 200
+
+    belt = [p for p in pats if p["collection"] == "Belt"]  # only paper sizes: the A4 copy is shown
+    assert len(belt) == 1 and belt[0]["paper"] == "A4" and belt[0]["papers"] == ["A4", "Letter"]
+    assert client.get("/api/stats").json()["total"] == len(client.get("/api/patterns", params={"kind": ""}).json())
+
+
+def test_each_piece_of_a_sizes_only_download_gets_one_card(client):
+    pats = [p for p in client.get("/api/patterns").json() if p["collection"] == "Traveler Set"]
+    assert sorted(p["title"] for p in pats) == ["MAKER Traveler Cover", "MAKER Traveler Divider"]
+    assert all(p["papers"] == ["A4", "Letter"] for p in pats)
