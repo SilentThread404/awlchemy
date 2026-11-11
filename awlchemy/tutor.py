@@ -365,7 +365,7 @@ def _library_overview() -> str:
     with db.session() as conn:
         rows = conn.execute(
             "SELECT id, title, collection, difficulty, status FROM patterns "
-            "WHERE missing=0 AND kind='pattern' ORDER BY difficulty, collection, title"
+            "WHERE missing=0 AND print_of IS NULL AND kind='pattern' ORDER BY difficulty, collection, title"
         ).fetchall()
     lines = [f"- #{r['id']} {r['title']}"
              + (f" [{r['collection']}]" if r["collection"] and r["collection"] != r["title"] else "")

@@ -40,22 +40,7 @@ DEFAULT_SETTINGS: dict = {
     "about_me": "",  # anything else the teacher should know
 }
 
-# Free pattern catalogues the app offers to add with one click (never added without asking).
-# Only catalogues whose terms allow downloading the files for your own use belong here; the
-# files are fetched onto each user's computer and are never part of this repository.
-STARTER_SOURCES: list[dict] = [
-    {
-        "key": "makesupply",
-        "name": "MAKESUPPLY free templates",
-        "kind": "web",
-        "location": "https://projects.makesupply.co/templates/free-leather-templates/",
-        "site": "MAKESUPPLY",
-        "about": "About 60 free patterns: wallets, card holders, notebook and passport covers, "
-                 "bags, key fobs and more, mostly in A4 and Letter.",
-        "terms": "https://projects.makesupply.co/terms-of-service/",
-        "terms_summary": "Free to download and use, and you may sell what you make. Don't share the files themselves.",
-    },
-]
+SOURCE_KINDS = ("gdrive", "folder")
 
 _lock = threading.Lock()
 
@@ -72,6 +57,9 @@ def _migrate(data: dict) -> dict:
                    if m.parent.name != IMPORT_DIR.name] if LIBRARY_DIR.exists() else []
         name = mirrors[0] if mirrors else "Google Drive"
         data["sources"] = [{"name": name, "kind": "gdrive", "location": data["drive_folder"], "enabled": True}]
+    if isinstance(data.get("sources"), list):
+        # kinds this version no longer has (the old "web" catalogue source) are dropped
+        data["sources"] = [s for s in data["sources"] if isinstance(s, dict) and s.get("kind") in SOURCE_KINDS]
     return data
 
 

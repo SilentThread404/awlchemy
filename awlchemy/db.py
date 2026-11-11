@@ -112,7 +112,7 @@ def row_to_pattern(row: sqlite3.Row, full: bool = False) -> dict:
     d = dict(row)
     d.pop("text", None)
     d["progress"] = json.loads(d.get("progress") or "[]")
-    d["has_guide"] = bool(d.get("guide"))
+    d["has_guide"] = bool(d["has_guide"]) if "has_guide" in d else bool(d.get("guide"))
     if full:
         d["guide"] = json.loads(d["guide"]) if d.get("guide") else None
     else:

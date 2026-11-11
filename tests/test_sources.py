@@ -76,3 +76,23 @@ def test_one_broken_source_does_not_stop_the_rest():
 def test_legacy_single_drive_setting_becomes_a_source(tmp_path, monkeypatch):
     data = config._migrate({"drive_folder": "https://drive.google.com/drive/folders/OLD"})
     assert data["sources"][0]["kind"] == "gdrive" and data["sources"][0]["location"].endswith("/OLD")
+
+
+def test_web_pages_are_not_sources_and_old_ones_are_dropped():
+    with pytest.raises(ValueError):
+        sources.add_source("Site", "https://patterns.example/templates/free/")
+    old = {"sources": [{"name": "Old site", "kind": "web", "location": "https://patterns.example/", "enabled": True},
+                       {"name": "Shared", "kind": "gdrive", "location": "https://drive.google.com/drive/folders/abc", "enabled": True}]}
+    assert [s["name"] for s in config._migrate(old)["sources"]] == ["Shared"]
+
+
+def test_removing_a_source_keeps_its_files_unless_asked():
+    folder = make_folder()
+    sources.add_source("Local", str(folder))
+    sources.sync_all(log=lambda s: None)
+    dest = config.LIBRARY_DIR / "Local"
+    sources.remove_source("local")
+    assert dest.exists() and folder.exists()
+    sources.add_source("Local", str(folder))
+    sources.remove_source("Local", delete_files=True)
+    assert not dest.exists() and folder.exists()  # the mirror goes, never the user's own folder

@@ -59,11 +59,19 @@ def cmd_source_list(_args) -> None:
 
 
 def cmd_source_remove(args) -> None:
+    stored = next((s["name"] for s in sources.list_sources() if s["name"].lower() == args.name.lower()), args.name)
     try:
-        sources.remove_source(args.name)
-    except ValueError as ex:
+        sources.remove_source(args.name, delete_files=args.delete_files)
+    except (ValueError, OSError) as ex:
         sys.exit(str(ex))
-    print(f"Removed '{args.name}'. Its files stay in library/{args.name}/ until you delete them.")
+    if args.delete_files:
+        db.init()
+        r = indexer.purge_source(stored)
+        print(f"Removed '{args.name}' and {r['removed']} pattern file(s) from the library."
+              + (f" {r['kept']} with your notes or guides stay in the database." if r["kept"] else ""))
+    else:
+        print(f"Removed '{args.name}'. Its files stay in library/{args.name}/ "
+              "(use --delete-files to remove them too).")
 
 
 def cmd_index(_args) -> None:
@@ -107,6 +115,7 @@ def main(argv: list[str] | None = None) -> None:
     a.set_defaults(func=cmd_source_list)
     a = ss.add_parser("remove", help="forget a source (downloaded files are kept)")
     a.add_argument("name")
+    a.add_argument("--delete-files", action="store_true", help="also delete its patterns from the library")
     a.set_defaults(func=cmd_source_remove)
 
     s = sub.add_parser("index", help="re-scan the library folder")

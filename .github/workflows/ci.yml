@@ -21,7 +21,9 @@ jobs:
       - run: uv sync --locked
       - run: uv run pytest -q
       - name: JavaScript syntax
-        run: node --check awlchemy/static/app.js
+        run: |
+          node --check awlchemy/static/app.js
+          node --check demo/demo.js
 
   no-pattern-content:
     runs-on: ubuntu-latest
