@@ -35,3 +35,7 @@ branding/
 # Local Claude Code files
 .claude/settings.local.json
 CLAUDE.local.md
+
+# Built demo site (python demo/build.py)
+demo/_site/
+_site/

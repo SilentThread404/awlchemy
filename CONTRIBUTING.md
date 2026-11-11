@@ -19,6 +19,8 @@ uv run python tests/make_fixtures.py "$AWLCHEMY_HOME"
 uv run python tests/serve_fake.py      # http://127.0.0.1:8765, Claude Code replaced by tests/fake_claude.py
 ```
 
+The public demo site is the same frontend with `demo/demo.js` in place of the server. If you change an API endpoint or what it returns, update `demo/demo.js` as well; `uv run pytest` tells you when the two drift apart (that test needs Node.js).
+
 `CLAUDE.md` describes the architecture. Read it before larger changes.
 
 ## Ground rules

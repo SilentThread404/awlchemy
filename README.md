@@ -6,6 +6,8 @@
 
 A leathercraft workshop on your own computer. All your PDF patterns go into one searchable library, and **the Awlchemist**, a Claude-powered teacher, turns each pattern into a build guide a beginner can follow.
 
+**[Try the demo in your browser](https://silentthread404.github.io/awlchemy/)**. It uses made-up patterns and pre-written answers, and nothing is installed or saved.
+
 Plug in your own patterns: a shared Google Drive folder, a folder on your computer (Dropbox, OneDrive, a USB stick, a NAS), or PDFs you drop in or link to. Nothing about your patterns is stored in this repository.
 
 ## What it does
@@ -13,15 +15,13 @@ Plug in your own patterns: a shared Google Drive folder, a folder on your comput
 - **Keeps your pattern sources in sync.** Add as many sources as you like. Each one is mirrored into its own folder in `library/`, and later checks only fetch new files.
   - **Google Drive folder** shared as "Anyone with the link". No Google login or API key is needed.
   - **Local or network folder.** New and changed PDFs/ZIPs are copied in.
-  - **A web page that lists free patterns.** Each pattern page it links to is visited and its PDF or ZIP downloaded.
-  - **Free starter patterns.** With an empty library, or under Settings, one click adds MAKESUPPLY's free templates (about 60 patterns). Nothing is downloaded until you click, and their terms ask you not to share the files.
 - **Builds a library you can browse.** Every PDF gets:
   - a cover image
   - a difficulty, taken from folders named like `1. EASY`, `2. MEDIUM`, `3. HARD`, `4. VERY HARD`
   - its collection (the folder it's in)
   - full-text search
   
-  Text PDFs are also converted to Markdown for a readable *Instructions* tab.
+  Text PDFs are also converted to Markdown for a readable *Instructions* tab. A pattern that ships its pieces in several paper sizes (A4, Letter, A1…) shows as one card, and you pick the size when you print. You can rename a pattern and set its difficulty yourself.
 - **Lets you add single patterns.** Drop in PDF/ZIP files, or paste a link: a Drive file, a direct PDF link, or a web page that links to PDFs. They go into `library/Imported/`.
 - **Writes a build guide per pattern.** Claude looks at every page, drawings included, and writes:
   - which leather to use for each part, with tannage, thickness in mm and oz, and the reason
@@ -59,6 +59,7 @@ uv run awlchemy                                  # start the app
 uv run awlchemy source add "My patterns" "https://drive.google.com/drive/folders/…"
 uv run awlchemy source add "Dropbox" "D:\Dropbox\Leather patterns"
 uv run awlchemy source list
+uv run awlchemy source remove "Dropbox" [--delete-files]   # --delete-files also takes its patterns out of the library
 uv run awlchemy sync --dry-run                   # what's new, without downloading
 uv run awlchemy sync [--source "My patterns"]    # fetch new files, then index
 uv run awlchemy index                            # re-scan library/ after copying PDFs in by hand
@@ -89,6 +90,17 @@ The app renders every page of a pattern to an image and points Claude at those i
 Each session can only read files and search the web. It can't run commands or change files, and it doesn't load your own Claude Code settings, plugins or MCP servers. A pattern or web page can't talk Claude into more than that either. It can only open your patterns, their page images and your chat photos, never your settings or other files on the computer. It also can't fetch anything on your own computer or home network.
 
 You pick the model in Settings. Opus writes the most careful guides but uses your plan's limits fastest; Haiku uses the least.
+
+## The demo site
+
+`demo/` holds a static version of the app for GitHub Pages: the real frontend, with `demo/demo.js` standing in for the server. Everything in it is invented for the demo.
+
+```
+python demo/build.py                                  # writes demo/_site/
+python -m http.server 8799 --directory demo/_site     # then open http://127.0.0.1:8799
+```
+
+To publish it from your own fork, choose **Settings → Pages → Source: GitHub Actions** once. The `Demo site` workflow then deploys on every push to `main` that touches the frontend or `demo/`.
 
 ## Respect pattern licences
 

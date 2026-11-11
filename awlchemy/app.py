@@ -70,6 +70,11 @@ async def local_only(request: Request, call_next):
 
 # --------------------------------------------------------------------------- helpers
 
+LIST_COLUMNS = ("id, rel_path, title, collection, difficulty, source, kind, pages, added_at, favorite, status, "
+                "progress, guide_at, print_of, paper, guide IS NOT NULL AS has_guide")
+DIFFICULTIES = ("Easy", "Medium", "Hard", "Very Hard")
+
+
 def get_pattern(pid: int) -> dict:
     with db.session() as conn:
         row = conn.execute("SELECT * FROM patterns WHERE id=?", (pid,)).fetchone()
@@ -83,7 +88,8 @@ def get_pattern(pid: int) -> dict:
 @app.get("/api/patterns")
 def list_patterns(q: str = "", difficulty: str = "", kind: str = "pattern", status: str = "",
                   source: str = "", favorite: bool = False):
-    sql = "SELECT * FROM patterns WHERE missing=0 AND print_of IS NULL"
+    # Not SELECT *: "text" and "guide" hold whole documents, and a library has hundreds of rows.
+    sql = f"SELECT {LIST_COLUMNS} FROM patterns WHERE missing=0 AND print_of IS NULL"
     args: list = []
     if kind:
         sql += " AND kind=?"
@@ -106,7 +112,7 @@ def list_patterns(q: str = "", difficulty: str = "", kind: str = "pattern", stat
         like = f"%{word}%"
         sql += " AND (title LIKE ? OR collection LIKE ? OR text LIKE ? OR notes LIKE ?)"
         args += [like, like, like, like]
-    order = {"Easy": 1, "Medium": 2, "Hard": 3, "Very Hard": 4}
+    order = {d: i for i, d in enumerate(DIFFICULTIES, 1)}
     with db.session() as conn:
         rows = [db.row_to_pattern(r) for r in conn.execute(sql, args)]
         papers: dict[int, list] = {}
@@ -164,6 +170,7 @@ class PatternUpdate(BaseModel):
     notes: str | None = None
     progress: list[int] | None = None
     title: str | None = None
+    difficulty: str | None = None   # "" clears it (not rated)
 
 
 @app.patch("/api/patterns/{pid}")
@@ -172,6 +179,14 @@ def update_pattern(pid: int, body: PatternUpdate):
     fields = body.model_dump(exclude_none=True)
     if "status" in fields and fields["status"] not in ("", "wishlist", "in_progress", "done"):
         raise HTTPException(400, "bad status")
+    if "title" in fields:
+        fields["title"] = fields["title"].strip()[:200]
+        if not fields["title"]:
+            raise HTTPException(400, "A pattern needs a name.")
+    if "difficulty" in fields:
+        if fields["difficulty"] not in ("", *DIFFICULTIES):
+            raise HTTPException(400, "bad difficulty")
+        fields["difficulty"] = fields["difficulty"] or None
     if "progress" in fields:
         fields["progress"] = json.dumps(sorted(set(fields["progress"])))
     if "favorite" in fields:
@@ -406,9 +421,17 @@ class NewSource(BaseModel):
     location: str
 
 
+def _sources_view() -> list[dict]:
+    """The sources, each with how many patterns it has in the library."""
+    with db.session() as conn:
+        counts = {r[0]: r[1] for r in conn.execute(
+            "SELECT source, COUNT(*) FROM patterns WHERE missing=0 AND print_of IS NULL GROUP BY source")}
+    return [{**s, "patterns": counts.get(s["name"], 0)} for s in sources.list_sources()]
+
+
 @app.get("/api/sources")
 def list_sources():
-    return sources.list_sources()
+    return _sources_view()
 
 
 @app.post("/api/sources")
@@ -420,27 +443,22 @@ def add_source(body: NewSource):
     return {"source": src, "job": start_sync()}
 
 
-@app.get("/api/starters")
-def list_starters():
-    return sources.starters()
-
-
-@app.post("/api/starters/{key}")
-def add_starter(key: str):
-    try:
-        src = sources.add_starter(key)
-    except ValueError as ex:
-        raise HTTPException(400, str(ex))
-    return {"source": src, "job": start_sync()}
-
-
 @app.delete("/api/sources/{name}")
-def remove_source(name: str):
+def remove_source(name: str, delete_files: bool = False):
+    """Forget a source. With delete_files, its folder in the library and its patterns go too
+    (patterns you wrote notes or a guide for stay in the database, marked missing)."""
+    if delete_files and jobs.running(SYNC_KEY):
+        raise HTTPException(409, "The library is busy. Try again when the update has finished.")
     try:
-        sources.remove_source(name)
+        stored = next((s["name"] for s in sources.list_sources() if s["name"].lower() == name.lower()), name)
+        sources.remove_source(name, delete_files=delete_files)
     except ValueError as ex:
         raise HTTPException(404, str(ex))
-    return sources.list_sources()
+    except OSError as ex:  # some files couldn't be deleted; the source is still there, so it can be retried
+        indexer.purge_source(stored)
+        raise HTTPException(409, str(ex))
+    purged = indexer.purge_source(stored) if delete_files else {}
+    return {"sources": _sources_view(), **purged}
 
 
 @app.post("/api/claude/check")

@@ -15,6 +15,12 @@ function md(text) {
   return html.replace(/\(#(\d+)\)/g, '(<a href="#/p/$1">open pattern</a>)');
 }
 
+/* The demo site (see demo/) runs this same file without a server: it sets window.AWLCHEMY_DEMO,
+   which answers the API calls and supplies the pictures. In the real app it is undefined. */
+const demo = window.AWLCHEMY_DEMO;
+const request = (path, init) => (demo ? demo.fetch(path, init) : fetch(path, init));
+const asset = (path) => (demo ? demo.asset(path) : path);
+
 async function api(path, opts = {}) {
   const init = { ...opts };
   if (opts.json !== undefined) {
@@ -22,7 +28,7 @@ async function api(path, opts = {}) {
     init.headers = { "Content-Type": "application/json" };
     init.body = JSON.stringify(opts.json);
   }
-  const res = await fetch(path, init);
+  const res = await request(path, init);
   if (!res.ok) {
     let msg = `${res.status}`;
     try { msg = (await res.json()).detail || msg; } catch {}
@@ -268,7 +274,7 @@ window.addEventListener("hashchange", () => { window.scrollTo(0, 0); render(); }
 function card(p) {
   const cls = p.status === "done" ? "made" : p.status === "in_progress" ? "making" : "";
   return `<a class="card ${cls}" href="#/p/${p.id}">
-    <div class="cover"><img loading="lazy" src="/api/patterns/${p.id}/cover" alt=""></div>
+    <div class="cover"><img loading="lazy" src="${asset(`/api/patterns/${p.id}/cover`)}" alt=""></div>
     <button class="star fav ${p.favorite ? "on" : ""}" data-fav="${p.id}" aria-label="Favourite">${p.favorite ? STAR : STAR_O}</button>
     <div class="body">
       <div class="title">${esc(p.title)}</div>
@@ -339,40 +345,10 @@ async function renderLibrary() {
           ${s.library_job || !s.source_count ? "" : `<p><button class="btn primary" id="first-sync">Fetch my patterns</button></p>`}</div>`
       : `<div class="empty"><h2>No matches</h2><p>Try fewer words or clear a filter.</p></div>`;
     $("#first-sync")?.addEventListener("click", async () => { await api("/api/sync", { method: "POST" }); refreshStats(); });
-    if (nothing) {
-      const offers = (await api("/api/starters")).filter((x) => !x.added);
-      if (offers.length) {
-        $(".empty", results).insertAdjacentHTML("beforeend", `<div class="starters">${offers.map(starterCard).join("")}</div>`);
-        bindStarters(results);
-      }
-    }
     return;
   }
   results.innerHTML = `<div class="grid">${items.map(card).join("")}</div>`;
   bindFavs(results);
-}
-
-/* Free pattern catalogues the app offers; nothing is fetched until the user clicks. */
-function starterCard(x) {
-  return `<div class="starter">
-      <h3>Start with free patterns from ${esc(x.site)}</h3>
-      <p>${esc(x.about)}</p>
-      <p class="muted small">${esc(x.terms_summary)} <a href="${esc(x.terms)}" target="_blank" rel="noopener">Read their terms</a></p>
-      ${x.added ? `<p class="muted small">Added. They're in your library under “${esc(x.name)}”.</p>`
-        : `<button class="btn primary" data-starter="${esc(x.key)}">Add the free patterns</button>`}
-    </div>`;
-}
-
-function bindStarters(root, after) {
-  $$("[data-starter]", root).forEach((b) => b.addEventListener("click", async () => {
-    b.disabled = true;
-    try {
-      await api(`/api/starters/${encodeURIComponent(b.dataset.starter)}`, { method: "POST" });
-      toast("Added. Downloading the free patterns…");
-      await refreshStats();
-      after ? after() : render();
-    } catch (e) { b.disabled = false; toast(e.message, 6000); }
-  }));
 }
 
 /* ------------------------------------------------------------------ bench */
@@ -468,7 +444,7 @@ function printBox(p, pdf) {
   }
   const home = homePaper();
   const sorted = [...prints].sort((a, b) => (b.paper === home) - (a.paper === home));
-  const fileUrl = (v) => `/files/${v.id}/${encodeURIComponent(v.rel_path.split("/").pop())}`;
+  const fileUrl = (v) => asset(`/files/${v.id}/${encodeURIComponent(v.rel_path.split("/").pop())}`);
   const sizes = sorted.map((v, i) => `<a class="size ${i === 0 ? "first" : ""}" href="${fileUrl(v)}" target="_blank" rel="noopener">
       <strong>${esc(v.paper)}${v.label ? `<small>${esc(v.label)}</small>` : ""}</strong><span>${plural(v.pages || 0, "page")} · ${PAPER_HINT[v.paper] || "printer"}</span></a>`).join("");
   const instructions = p.paper ? "" : `<p class="small"><a href="${pdf}" target="_blank" rel="noopener">Open the instructions PDF</a></p>`;
@@ -483,19 +459,22 @@ async function renderPattern(id, tab) {
   if (!state.settings) await loadSettings();
   const p = await api(`/api/patterns/${id}`);
   current = p;
-  const pdf = `/files/${p.id}/${encodeURIComponent(p.rel_path.split("/").pop())}`;
+  const pdf = asset(`/files/${p.id}/${encodeURIComponent(p.rel_path.split("/").pop())}`);
   const pageBtns = Array.from({ length: Math.min(p.pages || 0, 24) }, (_, i) =>
-    `<button data-page="${i}" title="Page ${i + 1}"><img loading="lazy" src="/api/patterns/${p.id}/page/${i}?w=200" alt="Page ${i + 1}"><span>${i + 1}</span></button>`).join("");
+    `<button data-page="${i}" title="Page ${i + 1}"><img loading="lazy" src="${asset(`/api/patterns/${p.id}/page/${i}?w=200`)}" alt="Page ${i + 1}"><span>${i + 1}</span></button>`).join("");
 
   app.innerHTML = `<div class="pat">
     <aside class="bench"><div class="bench-inner">
       <div class="crumbs"><a href="#/">Library</a>${p.collection ? ` / ${esc(p.collection)}` : ""}</div>
-      <h1>${esc(p.title)}</h1>
-      <div class="sub">${p.kind === "guide" ? "Guide book" : holes(p.difficulty) + `<span>${esc(p.difficulty || "Not rated")}</span>`}<span>${p.pages} page${p.pages === 1 ? "" : "s"}</span><span>${esc(p.source)}</span></div>
-      <div class="hero-img"><img id="hero" src="/api/patterns/${p.id}/cover?t=${Date.now()}" alt="${esc(p.title)}"></div>
+      <h1 id="pat-title">${esc(p.title)}</h1>
+      <div class="sub">${p.kind === "guide" ? "Guide book" : holes(p.difficulty) + `<span>${esc(p.difficulty || "Not rated")}</span>`}<span>${p.pages} page${p.pages === 1 ? "" : "s"}</span><span>${esc(p.source)}</span>
+        <button class="linkish" id="rename">Rename</button></div>
+      <div class="hero-img"><img id="hero" src="${asset(`/api/patterns/${p.id}/cover?t=${Date.now()}`)}" alt="${esc(p.title)}"></div>
       ${printBox(p, pdf)}
-      ${p.kind === "pattern" ? `<label for="status" style="color:#fff">Status</label>
-      <select id="status">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${p.status === k ? "selected" : ""}>${v}</option>`).join("")}</select>` : ""}
+      ${p.kind === "pattern" ? `<div class="pat-fields"><div><label for="status">Status</label>
+      <select id="status">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${p.status === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+      <div><label for="difficulty">Difficulty</label>
+      <select id="difficulty"><option value="">Not rated</option>${Object.keys(DIFF).map((d) => `<option ${p.difficulty === d ? "selected" : ""}>${d}</option>`).join("")}</select></div></div>` : ""}
       <h3>Pages</h3>
       <div class="pages" id="pages">${pageBtns}</div>
       <p class="small" style="margin-top:8px"><button class="btn" id="set-cover" disabled>Use selected page as the picture</button></p>
@@ -516,9 +495,38 @@ async function renderPattern(id, tab) {
     $$("#pages button").forEach((x) => x.classList.remove("on"));
     b.classList.add("on");
     selectedPage = +b.dataset.page;
-    $("#hero").src = `/api/patterns/${p.id}/page/${selectedPage}?w=900`;
+    $("#hero").src = asset(`/api/patterns/${p.id}/page/${selectedPage}?w=900`);
     $("#set-cover").disabled = false;
   }));
+  $("#rename").addEventListener("click", () => {
+    const h = $("#pat-title");
+    if ($("input", h)) return;
+    h.innerHTML = `<input type="text" id="title-in" maxlength="200" aria-label="Pattern name">`;
+    const inp = $("#title-in");
+    inp.value = p.title;
+    inp.focus();
+    inp.select();
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") inp.blur();
+      if (e.key === "Escape") { inp.value = p.title; inp.blur(); }
+    });
+    inp.addEventListener("blur", async () => {
+      const name = inp.value.trim();
+      if (name && name !== p.title) {
+        try {
+          await api(`/api/patterns/${p.id}`, { method: "PATCH", json: { title: name } });
+          p.title = name;
+          toast("Renamed");
+        } catch (e) { toast(e.message, 6000); }
+      }
+      h.textContent = p.title;
+    });
+  });
+  $("#difficulty")?.addEventListener("change", async (e) => {
+    await api(`/api/patterns/${p.id}`, { method: "PATCH", json: { difficulty: e.target.value } });
+    toast(e.target.value ? `Rated “${e.target.value}”` : "Rating cleared");
+    renderPattern(p.id, route().tab);
+  });
   $("#set-cover").addEventListener("click", async () => {
     const fd = new FormData(); fd.append("page", selectedPage);
     await api(`/api/patterns/${p.id}/cover`, { method: "POST", body: fd });
@@ -804,7 +812,7 @@ async function renderChat(pane, { patternId = null, prefill = "", send = false, 
     $$(".starters button", thread).forEach((b) => b.addEventListener("click", () => { $("#msg", pane).value = b.textContent; sendMsg(); }));
   };
   const msgHtml = (m) => m.role === "user"
-    ? `<div class="msg user">${m.photos?.length ? `<div class="photos">${m.photos.map((f) => `<img src="/photos/${f}" alt="Your photo">`).join("")}</div>` : ""}${esc(m.text)}</div>`
+    ? `<div class="msg user">${m.photos?.length ? `<div class="photos">${m.photos.map((f) => `<img src="${asset(`/photos/${f}`)}" alt="Your photo">`).join("")}</div>` : ""}${esc(m.text)}</div>`
     : `<div class="msg assistant"><div class="md">${md(m.text)}</div>${sourcesHtml(m.sources)}</div>`;
 
   if (active) {
@@ -856,7 +864,7 @@ async function renderChat(pane, { patternId = null, prefill = "", send = false, 
 
     let acc = "";
     try {
-      const res = await fetch(`/api/chats/${active}/message`, { method: "POST", body: fd });
+      const res = await request(`/api/chats/${active}/message`, { method: "POST", body: fd });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
       const reader = res.body.getReader();
       const dec = new TextDecoder();
@@ -903,7 +911,7 @@ async function renderLearn() {
       <div id="learn-chat"></div></section>
     <aside>
       <h3>Guide books in your library</h3>
-      <div class="guides-list">${guides.length ? guides.map((g) => `<a href="#/p/${g.id}/text"><img src="/api/patterns/${g.id}/cover" alt="" loading="lazy"><span>${esc(g.title)}</span></a>`).join("") : `<p class="muted small">None yet. They arrive with the next sync.</p>`}</div>
+      <div class="guides-list">${guides.length ? guides.map((g) => `<a href="#/p/${g.id}/text"><img src="${asset(`/api/patterns/${g.id}/cover`)}" alt="" loading="lazy"><span>${esc(g.title)}</span></a>`).join("") : `<p class="muted small">None yet. They arrive with the next sync.</p>`}</div>
       <h3>Technique videos</h3>
       ${techs.length ? techs.map((t) => `<details class="tech-videos"><summary>${esc(cap(t))} <span class="muted small">(${videos[t].length})</span></summary>
         <div class="videos">${videos[t].map((v) => videoCard(v, true)).join("")}</div></details>`).join("")
@@ -946,11 +954,10 @@ async function renderSettings() {
       <h3 style="margin-top:0">Pattern sources</h3>
       <p class="muted small">Where your patterns live. Each source is copied into its own folder in the library, and later checks only fetch new files.</p>
       <div id="src-list"></div>
-      <div id="starters"></div>
       <label for="src-name">Add a source</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <input type="text" id="src-name" placeholder="Name, e.g. My patterns" style="max-width:200px">
-        <input type="text" id="src-loc" placeholder="Shared Google Drive folder, a web page of free patterns, or a folder like D:\\Patterns" style="flex:1;min-width:220px">
+        <input type="text" id="src-loc" placeholder="Shared Google Drive folder link, or a folder like D:\\Patterns" style="flex:1;min-width:220px">
         <button class="btn" id="src-add">Add</button>
       </div>
       <div class="hint">Google Drive folders must be shared as “Anyone with the link”. No Google login is used.</div>
@@ -976,20 +983,11 @@ async function renderSettings() {
   });
   const drawSources = (list) => {
     $("#src-list").innerHTML = list.length
-      ? list.map((x) => `<div class="toolkit-edit" style="margin:4px 0"><span><strong>${esc(x.name)}</strong>&nbsp;<span class="muted small">${{ gdrive: "Google Drive", web: "Website" }[x.kind] || "Folder"} · ${esc(x.location)}</span><button data-src="${esc(x.name)}" aria-label="Remove ${esc(x.name)}">×</button></span></div>`).join("")
+      ? list.map((x, i) => `<div class="toolkit-edit" style="margin:4px 0"><span><strong>${esc(x.name)}</strong>&nbsp;<span class="muted small">${x.kind === "gdrive" ? "Google Drive" : "Folder"} · ${plural(x.patterns || 0, "pattern")} · ${esc(x.location)}</span><button data-src="${i}" aria-label="Remove ${esc(x.name)}">×</button></span></div>`).join("")
       : `<p class="muted small">No sources yet.</p>`;
-    $$("[data-src]").forEach((b) => b.addEventListener("click", async () => {
-      drawSources(await api(`/api/sources/${encodeURIComponent(b.dataset.src)}`, { method: "DELETE" }));
-      toast(`Removed. Files already fetched stay in the library.`);
-    }));
+    $$("[data-src]").forEach((b) => b.addEventListener("click", () => removeSourceDialog(list[+b.dataset.src], drawSources)));
   };
-  drawSources(s.sources || []);
-  const drawStarters = async () => {
-    const offers = (await api("/api/starters")).filter((x) => !x.added);
-    $("#starters").innerHTML = offers.map(starterCard).join("");
-    bindStarters($("#starters"), async () => { drawSources(await api("/api/sources")); drawStarters(); });
-  };
-  drawStarters();
+  api("/api/sources").then(drawSources);
   $("#src-add").addEventListener("click", async () => {
     try {
       await api("/api/sources", { json: { name: $("#src-name").value, location: $("#src-loc").value } });
@@ -1010,6 +1008,36 @@ async function renderSettings() {
     toast("Settings saved");
     renderSettings();
   });
+}
+
+/* Removing a source: keep what it brought in, or take its patterns out of the library too. */
+function removeSourceDialog(src, redraw) {
+  const bg = document.createElement("div");
+  bg.className = "modal-bg";
+  bg.innerHTML = `<div class="modal" role="dialog" aria-label="Remove a source">
+    <button class="btn quiet close" aria-label="Close">✕</button>
+    <h2>Remove “${esc(src.name)}”?</h2>
+    <p>Awlchemy stops checking this source for new patterns. What should happen to the ${plural(src.patterns || 0, "pattern")} it already brought in?</p>
+    <p class="choices"><button class="btn" id="rm-keep">Keep them in my library</button>
+      <button class="btn danger" id="rm-all">Delete them too</button></p>
+    <p class="muted small">Deleting removes this source's folder from your library on this computer. Patterns you wrote notes or a build guide for keep those. ${src.kind === "folder" ? "The original folder is not touched." : "Nothing changes on Google Drive."}</p>
+  </div>`;
+  document.body.appendChild(bg);
+  const close = () => bg.remove();
+  $(".close", bg).onclick = close;
+  bg.addEventListener("click", (e) => { if (e.target === bg) close(); });
+  const go = async (del) => {
+    $$("button", bg).forEach((b) => { b.disabled = true; });
+    try {
+      const r = await api(`/api/sources/${encodeURIComponent(src.name)}${del ? "?delete_files=true" : ""}`, { method: "DELETE" });
+      toast(del ? `Removed, along with ${plural(r.removed || 0, "pattern file")}.` : "Removed. Its patterns stay in your library.");
+      redraw(r.sources);
+      refreshStats();
+    } catch (e) { toast(e.message, 6000); }
+    close();
+  };
+  $("#rm-keep", bg).onclick = () => go(false);
+  $("#rm-all", bg).onclick = () => go(true);
 }
 
 /* ------------------------------------------------------------------ boot */

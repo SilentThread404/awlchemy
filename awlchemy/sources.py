@@ -7,7 +7,6 @@ then scans. Two kinds are supported:
             (incremental: only files not downloaded before are fetched)
   * folder  a folder on this computer or a network share, e.g. a Dropbox or
             OneDrive folder (incremental: only new or changed files are copied)
-  * web     a public web page listing free patterns (see web_sync.py)
 
 Sources are stored in data/settings.json under "sources", never in the code,
 so the links to patterns you bought stay on your computer.
@@ -15,16 +14,18 @@ so the links to patterns you bought stay on your computer.
 
 from __future__ import annotations
 
+import os
 import shutil
+import stat
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import config, drive_sync, jobs, web_sync
+from . import config, drive_sync, jobs
 
 Log = Callable[[str], None]
-KINDS = ("gdrive", "folder", "web")
+KINDS = config.SOURCE_KINDS
 COPY_SUFFIXES = {".pdf", ".zip"}
 RESERVED = {"imported"}  # library/Imported/ belongs to the importer
 
@@ -42,12 +43,12 @@ def detect_kind(location: str) -> str:
         return "gdrive"
     if parsed:
         raise ValueError("That's a link to a single file. Use Import for single files; a source must be a folder.")
-    if location.lower().startswith(("http://", "https://")):
-        return "web"
     if Path(location).expanduser().is_dir():
         return "folder"
-    raise ValueError("Give a shared Google Drive folder link, a web page listing free patterns, "
-                     "or the path of a folder on this computer.")
+    if location.lower().startswith(("http://", "https://")):
+        raise ValueError("Only shared Google Drive folder links work as a source. "
+                         "For other links, use “Add a pattern” in the library.")
+    raise ValueError("Give a shared Google Drive folder link or the path of a folder on this computer.")
 
 
 def target_dir(source: dict) -> Path:
@@ -78,26 +79,39 @@ def add_source(name: str, location: str, kind: str | None = None) -> dict:
     return source
 
 
-def starters() -> list[dict]:
-    """The free catalogues the app offers to add, each marked with whether it's already a source."""
-    have = {s["location"].rstrip("/").lower() for s in list_sources()}
-    return [{**s, "added": s["location"].rstrip("/").lower() in have} for s in config.STARTER_SOURCES]
-
-
-def add_starter(key: str) -> dict:
-    s = next((s for s in config.STARTER_SOURCES if s["key"] == key), None)
-    if s is None:
-        raise ValueError(f"No starter pack called '{key}'.")
-    return add_source(s["name"], s["location"], "web")
-
-
-def remove_source(name: str) -> None:
-    """Forget a source. Files already in library/<name>/ are kept."""
+def remove_source(name: str, delete_files: bool = False) -> None:
+    """Forget a source. Its files in library/<name>/ are kept unless delete_files is set;
+    the caller then re-scans, so the index drops them (see indexer.scan)."""
     current = list_sources()
-    left = [s for s in current if s["name"].lower() != name.lower()]
-    if len(left) == len(current):
+    gone = [s for s in current if s["name"].lower() == name.lower()]
+    if not gone:
         raise ValueError(f"No source called '{name}'.")
-    config.save_settings({"sources": left})
+    if delete_files:
+        folder = target_dir(gone[0])
+        # only ever a direct child of library/, and never the importer's folder
+        if folder.parent.resolve() == config.LIBRARY_DIR.resolve() and folder.name.lower() not in RESERVED:
+            _remove_tree(folder)
+    config.save_settings({"sources": [s for s in current if s not in gone]})
+
+
+def _remove_tree(folder: Path) -> None:
+    """Delete a folder. Windows (and folders synced by OneDrive or Dropbox) can refuse a file
+    for a moment or mark it read-only, so clear the flag and try a few times before giving up."""
+    def retry(fn, path, _exc) -> None:
+        os.chmod(path, stat.S_IWRITE)
+        time.sleep(0.2)
+        fn(path)
+
+    for _attempt in range(4):
+        if not folder.exists():
+            return
+        try:
+            shutil.rmtree(folder, onexc=retry)
+        except OSError:
+            time.sleep(1)
+    if folder.exists():
+        raise OSError(f"Couldn't delete everything in {folder}. A file may be open in another program; "
+                      "close it and try again.")
 
 
 def sync_all(log: Log = print, dry_run: bool = False, only: str | None = None) -> SyncTotals:
@@ -113,10 +127,6 @@ def sync_all(log: Log = print, dry_run: bool = False, only: str | None = None) -
         try:
             if s["kind"] == "gdrive":
                 r = drive_sync.sync_folder(s["location"], target_dir(s), dry_run=dry_run, log=log)
-                totals.downloaded += r.downloaded
-                totals.failed += r.failed
-            elif s["kind"] == "web":
-                r = web_sync.sync_catalogue(s["location"], target_dir(s), dry_run=dry_run, log=log)
                 totals.downloaded += r.downloaded
                 totals.failed += r.failed
             else:

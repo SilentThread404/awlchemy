@@ -110,3 +110,43 @@ def test_each_piece_of_a_sizes_only_download_gets_one_card(client):
     pats = [p for p in client.get("/api/patterns").json() if p["collection"] == "Traveler Set"]
     assert sorted(p["title"] for p in pats) == ["MAKER Traveler Cover", "MAKER Traveler Divider"]
     assert all(p["papers"] == ["A4", "Letter"] for p in pats)
+
+
+def test_rename_and_rate_a_pattern(client):
+    belt = next(p for p in client.get("/api/patterns").json() if p["collection"] == "Belt")
+    assert client.patch(f"/api/patterns/{belt['id']}", json={"title": "  "}).status_code == 400
+    assert client.patch(f"/api/patterns/{belt['id']}", json={"difficulty": "Impossible"}).status_code == 400
+    out = client.patch(f"/api/patterns/{belt['id']}", json={"title": "Dress belt", "difficulty": "Easy"}).json()
+    assert (out["title"], out["difficulty"]) == ("Dress belt", "Easy")
+    wait(client.post("/api/reindex").json())  # a re-scan doesn't undo either
+    again = client.get(f"/api/patterns/{belt['id']}").json()
+    assert (again["title"], again["difficulty"]) == ("Dress belt", "Easy")
+
+
+def test_the_teacher_sees_one_line_per_pattern_not_per_paper_size(client):
+    cid = client.post("/api/chats", json={"title": "g"}).json()["id"]
+    stream(client, cid, "What should I make next?")
+    overview = fake_claude.CALLS[-1][0]
+    assert overview.count("Sling Bag") == 1
+
+
+def test_removing_a_source_with_its_patterns(client, tmp_path):
+    import pymupdf
+
+    for name in ("Pouch", "Strap"):
+        doc = pymupdf.open()
+        doc.new_page().insert_text((72, 72), f"{name} pattern. " * 40)
+        (tmp_path / name).mkdir()
+        doc.save(tmp_path / name / f"{name}.pdf")
+    wait(client.post("/api/sources", json={"name": "Temp", "location": str(tmp_path)}).json()["job"])
+    mine = {p["title"]: p for p in client.get("/api/patterns", params={"source": "Temp"}).json()}
+    assert set(mine) == {"Pouch", "Strap"}
+    assert client.get("/api/sources").json()[0]["patterns"] == 2
+    client.patch(f"/api/patterns/{mine['Pouch']['id']}", json={"notes": "used 1.4 mm veg-tan"})
+
+    out = client.delete("/api/sources/temp", params={"delete_files": "true"}).json()
+    assert out["sources"] == [] and (out["removed"], out["kept"]) == (1, 1)
+    assert not (config.LIBRARY_DIR / "Temp").exists() and (tmp_path / "Pouch" / "Pouch.pdf").exists()
+    assert client.get("/api/patterns", params={"source": "Temp"}).json() == []
+    assert client.get(f"/api/patterns/{mine['Strap']['id']}").status_code == 404
+    assert client.get(f"/api/patterns/{mine['Pouch']['id']}").json()["notes"] == "used 1.4 mm veg-tan"  # notes survive

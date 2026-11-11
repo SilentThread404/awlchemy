@@ -317,6 +317,28 @@ def scan(log: Log = print, only: list[Path] | None = None) -> dict:
     return {"added": added, "updated": updated, "total": len(pdfs)}
 
 
+USER_DATA = ("COALESCE(notes,'')<>'' OR guide IS NOT NULL OR favorite=1 OR COALESCE(status,'')<>'' "
+             "OR COALESCE(progress,'[]')<>'[]' OR id IN (SELECT pattern_id FROM chats WHERE pattern_id IS NOT NULL)")
+
+
+def purge_source(source: str) -> dict:
+    """After a source's files were deleted: drop its patterns from the index, with their covers,
+    text and page renders. Patterns you made your own (notes, a guide, a status, a favourite,
+    a chat) are kept and only marked missing, so nothing you wrote is lost."""
+    with db.session() as conn:
+        rows = conn.execute("SELECT id, rel_path FROM patterns WHERE source=?", (source,)).fetchall()
+        ids = {r["id"] for r in rows if not (config.LIBRARY_DIR / r["rel_path"]).exists()}
+        keep = {r[0] for r in conn.execute(f"SELECT id FROM patterns WHERE source=? AND ({USER_DATA})", (source,))} & ids
+        for pid in ids - keep:
+            conn.execute("DELETE FROM patterns WHERE id=?", (pid,))
+            cover_path(pid).unlink(missing_ok=True)
+            markdown_path(pid).unlink(missing_ok=True)
+            shutil.rmtree(config.DATA_DIR / "pages" / str(pid), ignore_errors=True)
+        for pid in keep:
+            conn.execute("UPDATE patterns SET missing=1, print_of=NULL WHERE id=?", (pid,))
+    return {"removed": len(ids - keep), "kept": len(keep)}
+
+
 def _group_print_sizes(conn) -> None:
     """Many sellers ship one pattern as an instructions PDF plus the pieces in several paper
     sizes (A4, Letter, A1). Show one card per pattern and offer the sizes when printing.
@@ -343,7 +365,7 @@ def _group_print_sizes(conn) -> None:
         others = [r for r in folder if r not in sizes and r["kind"] == "pattern"]
         mains = others if len(others) <= 1 else [
             r for r in others if re.search(r"instruction|tutorial|guide|step", Path(r["rel_path"]).stem, re.I)]
-        owner: dict[int, sqlite3.Row] = {}  # size copy id -> the pattern it prints
+        owner: dict = {}  # size copy id -> the pattern (row) it prints
         if sizes and len(mains) == 1:
             owner = {r["id"]: mains[0] for r in sizes}
         elif sizes and not others:

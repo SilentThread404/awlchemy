@@ -21,6 +21,7 @@ uv run awlchemy import <link|file> --collection NAME
 
 Tests are pytest and fully offline. Run `uv run pytest` for all of them, or `uv run pytest tests/test_sources.py::test_folder_mirror_is_incremental` for a single test.
 - `tests/conftest.py` points `AWLCHEMY_HOME` at a temp dir **before** `awlchemy` is imported (`config` reads it at import time), then builds a sample library with `make_fixtures.py`.
+- `test_demo.py` builds the demo site and, when Node is installed, runs `tests/demo_smoke.mjs` against `demo/demo.js`.
 - `test_app.py` drives the FastAPI app with `claude_code.run` replaced by `tests/fake_claude.py`. The fake asserts the session lockdown options (`dontAsk`, no setting sources, empty `ANTHROPIC_API_KEY`, no Bash/Write/Edit) and returns canned guide, video and chat messages. One of the video URLs is invented and must be filtered out.
 - Manual UI demo with fake data: `make_fixtures.py <dir>`, then `tests/serve_fake.py` with `AWLCHEMY_HOME=<dir>`.
 - CI (`.github/workflows/ci.yml`) runs pytest on Windows, macOS and Linux. It also fails if a PDF or a real-looking Drive folder ID (25 or more characters) is committed.
@@ -29,15 +30,15 @@ Tests are pytest and fully offline. Run `uv run pytest` for all of them, or `uv 
 
 **Paths and state** (`config.py`): every path derives from `ROOT`, which is `AWLCHEMY_HOME` or the repo root. `library/<source name>/` holds one mirror per source and `library/Imported/` holds importer additions. `data/` holds `awlchemy.db`, `settings.json` (including the sources) and the generated files. Both directories are git-ignored and hold purchased content and personal data.
 
-**Open-source hygiene:** the code must never contain a real pattern-folder link, seller name or pattern text. Sources exist only in `data/settings.json`. The one exception is `config.STARTER_SOURCES`: public catalogues of *free* patterns whose terms allow downloading for personal use. They are only offered (the user clicks to add them), their files are downloaded onto the user's computer and never committed, and paid or shared-folder links still never go in the code. Fixtures and `awlchemy/knowledge/*.md` are original text, and users can add their own notes in `data/knowledge/`, which `tutor._knowledge()` also loads.
+**Open-source hygiene:** the code must never contain a real pattern-folder link, seller name or pattern text. Sources exist only in `data/settings.json`. Fixtures and `awlchemy/knowledge/*.md` are original text, and users can add their own notes in `data/knowledge/`, which `tutor._knowledge()` also loads.
 
 **Pipeline:** `sources` → `indexer` → `tutor`, with the disk as the source of truth.
 
-- `sources.py` stores sources as `{name, kind: gdrive|folder|web, location, enabled}`, validated in `add_source` and managed through `/api/sources` and the `source` CLI command (`PUT /api/settings` ignores `sources`). `/api/starters` lists the `STARTER_SOURCES` offers and adds one on request.
-  - A `web` source goes through `web_sync.sync_catalogue`: it reads the catalogue page, follows its pattern pages (and one level deeper from its "free" round-up pages, never the site's general index), and downloads every `.pdf`, `.zip` or `/download/<id>/` link into `library/<source>/<pattern name>/`, with a manifest keyed by download link.
+- `sources.py` stores sources as `{name, kind: gdrive|folder, location, enabled}`, validated in `add_source` and managed through `/api/sources` and the `source` CLI command (`PUT /api/settings` ignores `sources`).
   - `sync_all()` mirrors each enabled source into `library/<name>/`. A `gdrive` source goes through `drive_sync.sync_folder`. A `folder` source goes through `mirror_folder`, which copies PDFs/ZIPs with `copy2` and skips files whose size and mtime are unchanged.
   - One failing source is recorded in `errors` and doesn't stop the others.
-  - `config._migrate()` turns the legacy single `drive_folder` setting into a source.
+  - `remove_source(name, delete_files=True)` (the UI's "Delete them too", `source remove --delete-files`) also deletes `library/<name>/`; the caller then runs `indexer.purge_source`, which drops that source's rows and generated files but keeps (as `missing=1`) any pattern the user wrote notes, a guide, a status, a favourite or a chat for.
+  - `config._migrate()` turns the legacy single `drive_folder` setting into a source, and drops sources of a kind that no longer exists (the removed `web` catalogue kind).
 
 - `drive_sync.py` (also used by `importer.py`) scrapes `drive.google.com/embeddedfolderview?id=…`, which needs no Google auth or API key. It downloads through `drive.usercontent.google.com/download?...&confirm=t` and exports Google Docs as PDF. Incrementality comes from `<out>/.sync-manifest.json`, keyed by Drive **file ID**: a file is skipped if its ID is in the manifest and the local file exists. Files changed on Drive are not detected. An HTML response to a file download means Drive refused it (quota exceeded); that file is logged as failed and retried on the next run.
 - `indexer.scan()` walks `library/**/*.pdf`. It re-processes a file only when its mtime or size changed, and marks rows `missing=1` instead of deleting them, which preserves the user's notes, guides and progress. Metadata comes from folder names: difficulty from `1. EASY`-style folders, `kind=guide` from names like readme/handbook/toolkit, and the collection from the parent folder. Text is converted with **pymupdf4llm**; PDFs under `MIN_TEXT_CHARS` count as image-only. `_dedupe_titles` numbers same-named variants but never overrides a title the user renamed. `_group_print_sizes` folds paper-size copies (`Sling Bag A4.pdf`, `… Letter`, `… A1`) into the folder's one other PDF by setting `print_of`, so the library shows one card and the pattern page offers the sizes (`print_versions`). Anything listing patterns must filter `print_of IS NULL`.
@@ -55,7 +56,9 @@ Tests are pytest and fully offline. Run `uv run pytest` for all of them, or `uv 
 
 **Background work** (`jobs.py`): an in-process, in-memory thread runner that the UI polls through `/api/jobs/{id}`. Long steps call `jobs.report(log, phase=…, done=…, total=…)` for structured progress (a no-op outside a job); the library page's setup panel and the top-bar progress bar are drawn from it, so keep the field names in step with `renderSyncPanel` in `static/app.js`. Sync, import and index all share `exclusive_key="library"` in `app.py` so they never run concurrently. On startup, `app.lifespan` auto-syncs if sources exist and the last sync was more than 20 hours ago; otherwise it only re-indexes.
 
-**Frontend:** `awlchemy/static/` (`index.html`, `app.js`, `style.css`) has no build step and is served directly by FastAPI.
+**Frontend:** `awlchemy/static/` (`index.html`, `app.js`, `style.css`) has no build step and is served directly by FastAPI. Every request and every picture or file URL in `app.js` goes through `request()` / `asset()`, never a bare `fetch` or a literal `/api/...` in an `src`/`href`, because the demo site swaps those two out.
+
+**Demo site** (`demo/`): the same `app.js` running as a static page for GitHub Pages. `demo/demo.js` sets `window.AWLCHEMY_DEMO` (`fetch`, `asset`) and answers every `/api/*` call in memory with made-up patterns, SVG drawings, two pre-written guides and canned chat answers. `demo/build.py` (standard library only) assembles `index.html` + `style.css` + `app.js` + `demo.js` into `demo/_site/`, and `.github/workflows/demo.yml` deploys it. When an endpoint or its JSON shape changes, change `demo.js` too: `tests/test_demo.py` runs `tests/demo_smoke.mjs` under Node and fails if `app.js` calls a path the demo doesn't answer. The demo must stay invented: no real patterns, shops or video links.
 
 ## Conventions
 
@@ -64,4 +67,5 @@ Tests are pytest and fully offline. Run `uv run pytest` for all of them, or `uv 
 - Settings are only persisted for keys present in `DEFAULT_SETTINGS`. Add new settings there first, with neutral defaults (no personal country, links or paths).
 - `indexer.classify` sets `source` to the top folder under `library/`, which is the source name. The UI's Source filter relies on this.
 - The printable pattern must always come from the untouched original PDF (`/files/{pid}/…`), never from a conversion.
+- List queries must not `SELECT *` from `patterns`: `text` and `guide` hold whole documents. `app.LIST_COLUMNS` is the list shape.
 - The tutor is called "the Awlchemist" in the UI copy (`static/app.js`) and in its persona in `tutor.system_prompt`. Keep the two consistent. Personal brand assets live in the git-ignored `branding/`; the README cover image is `docs/cover.jpeg`.

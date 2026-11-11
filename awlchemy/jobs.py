@@ -12,6 +12,7 @@ from typing import Any, Callable
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
 _exclusive: dict[str, str] = {}  # kind -> running job id (for jobs that must not overlap)
+KEEP_FINISHED = 40  # finished jobs stay around long enough for the UI to read their result
 
 
 def _now() -> str:
@@ -21,8 +22,11 @@ def _now() -> str:
 def start(kind: str, fn: Callable[[Callable[[str], None]], Any], *, exclusive_key: str | None = None) -> dict:
     """Run fn(log) in a thread. If exclusive_key is set and such a job runs, return that one."""
     with _lock:
-        if exclusive_key and (jid := _exclusive.get(exclusive_key)) and _jobs[jid]["status"] == "running":
-            return public(_jobs[jid])
+        if exclusive_key and (old := _jobs.get(_exclusive.get(exclusive_key, ""))) and old["status"] == "running":
+            return public(old)
+        finished = [j for j, job in _jobs.items() if job["status"] != "running"]
+        for old_id in finished[:-KEEP_FINISHED]:  # dicts keep insertion order, so these are the oldest
+            del _jobs[old_id]
         jid = uuid.uuid4().hex[:12]
         job = {"id": jid, "kind": kind, "status": "running", "log": [], "progress": {}, "result": None,
                "error": None, "started_at": _now(), "finished_at": None}
@@ -70,10 +74,8 @@ def get(jid: str) -> dict | None:
 
 
 def running(exclusive_key: str) -> dict | None:
-    jid = _exclusive.get(exclusive_key)
-    if jid and _jobs[jid]["status"] == "running":
-        return public(_jobs[jid])
-    return None
+    job = _jobs.get(_exclusive.get(exclusive_key, ""))
+    return public(job) if job and job["status"] == "running" else None
 
 
 def public(job: dict) -> dict:

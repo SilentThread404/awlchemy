@@ -149,10 +149,9 @@ main { min-height: calc(100vh - 60px); }
 .empty h2 { color: var(--ink); }
 fieldset { min-width: 0; } /* a long source link wraps instead of widening the form */
 #src-list .muted { overflow-wrap: anywhere; }
-.starters { display: grid; gap: 12px; max-width: 560px; margin: 28px auto 0; text-align: left; }
-.starter { background: #fff; border: 1px solid var(--rule); border-left: 4px solid var(--vegtan); border-radius: var(--radius); padding: 16px 20px; margin: 10px 0; }
-.starter h3 { margin-bottom: .3em; color: var(--ink); }
-.starter p { margin: 0 0 8px; }
+.btn.danger { border-color: var(--warn); color: var(--warn); }
+.btn.danger:hover { background: var(--warn); border-color: var(--warn); color: #fff; }
+.modal .choices { display: flex; gap: 10px; flex-wrap: wrap; }
 
 /* ------------------------------------------------------------------ pattern page */
 .pat { display: grid; grid-template-columns: minmax(300px, 420px) 1fr; gap: 0; min-height: calc(100vh - 60px); }
@@ -169,6 +168,11 @@ fieldset { min-width: 0; } /* a long source link wraps instead of widening the f
 .bench .crumbs a { color: var(--thread); }
 .bench h1 { color: #fff; font-size: 1.8rem; }
 .bench .sub { color: var(--thread); opacity: .85; margin-bottom: 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.bench h1 input { width: 100%; font: inherit; color: var(--ink); padding: 2px 8px; border-radius: var(--radius-sm); border: 2px solid var(--vegtan); }
+.bench .linkish { background: none; border: 0; padding: 0; font: inherit; color: var(--thread); text-decoration: underline; cursor: pointer; }
+.bench .linkish:hover { color: #fff; }
+.pat-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.pat-fields label { color: #fff; }
 .bench .holes i { border-color: var(--thread); }
 .bench .holes i.on { background: var(--thread); }
 .hero-img {
